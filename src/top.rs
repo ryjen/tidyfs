@@ -1,6 +1,6 @@
 use crate::db::Database;
 use crate::util;
-use anyhow::{bail, Context, Result};
+use anyhow::Result;
 use rusqlite::params;
 use std::path::{Path, PathBuf};
 
@@ -10,12 +10,6 @@ pub struct TopQuery {
     pub limit: usize,
     pub depth: Option<usize>,
     pub root: Option<PathBuf>,
-}
-
-#[derive(Debug)]
-struct ScanInfo {
-    id: i64,
-    root_path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -30,8 +24,8 @@ struct TopRow {
 
 pub fn print_top(database: &Database, query: TopQuery) -> Result<()> {
     let scan = match query.scan_id {
-        Some(id) => get_scan(database, id)?,
-        None => latest_completed_scan(database)?,
+        Some(id) => database.get_scan(id)?,
+        None => database.latest_completed_scan()?,
     };
 
     let rows = load_rows(database, scan.id)?;
@@ -82,49 +76,6 @@ pub fn print_top(database: &Database, query: TopQuery) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn latest_completed_scan(database: &Database) -> Result<ScanInfo> {
-    let mut stmt = database.connection().prepare(
-        r#"
-        SELECT id, root_path
-        FROM scans
-        WHERE status = 'completed'
-        ORDER BY finished_at DESC, id DESC
-        LIMIT 1
-        "#,
-    )?;
-
-    let mut rows = stmt.query([])?;
-    let Some(row) = rows.next()? else {
-        bail!("no completed scans found; run `tidyfs scan <path>` first");
-    };
-
-    Ok(ScanInfo {
-        id: row.get(0)?,
-        root_path: PathBuf::from(row.get::<_, String>(1)?),
-    })
-}
-
-fn get_scan(database: &Database, scan_id: i64) -> Result<ScanInfo> {
-    let mut stmt = database.connection().prepare(
-        r#"
-        SELECT id, root_path
-        FROM scans
-        WHERE id = ?1
-        "#,
-    )?;
-
-    let scan = stmt
-        .query_row(params![scan_id], |row| {
-            Ok(ScanInfo {
-                id: row.get(0)?,
-                root_path: PathBuf::from(row.get::<_, String>(1)?),
-            })
-        })
-        .with_context(|| format!("scan id {scan_id} not found"))?;
-
-    Ok(scan)
 }
 
 fn load_rows(database: &Database, scan_id: i64) -> Result<Vec<TopRow>> {

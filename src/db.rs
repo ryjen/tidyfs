@@ -1,6 +1,12 @@
-use anyhow::{Context, Result};
-use rusqlite::{Connection, Transaction};
-use std::path::Path;
+use anyhow::{bail, Context, Result};
+use rusqlite::{params, Connection, Transaction};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone)]
+pub struct ScanInfo {
+    pub id: i64,
+    pub root_path: PathBuf,
+}
 
 pub struct Database {
     conn: Connection,
@@ -89,6 +95,23 @@ impl Database {
               error TEXT NOT NULL,
               FOREIGN KEY(scan_id) REFERENCES scans(id)
             );
+
+            CREATE TABLE IF NOT EXISTS classifications (
+              id INTEGER PRIMARY KEY,
+              scan_id INTEGER NOT NULL,
+              path TEXT NOT NULL,
+              label TEXT NOT NULL,
+              confidence REAL NOT NULL,
+              source TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              FOREIGN KEY(scan_id) REFERENCES scans(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_classifications_scan_path
+              ON classifications(scan_id, path);
+
+            CREATE INDEX IF NOT EXISTS idx_classifications_scan_label
+              ON classifications(scan_id, label);
             "#,
         )?;
 
@@ -101,5 +124,55 @@ impl Database {
 
     pub fn transaction(&mut self) -> Result<Transaction<'_>> {
         Ok(self.conn.transaction()?)
+    }
+
+    pub fn resolve_scan_id(&self, scan_id: Option<i64>) -> Result<i64> {
+        match scan_id {
+            Some(id) => Ok(id),
+            None => Ok(self.latest_completed_scan()?.id),
+        }
+    }
+
+    pub fn latest_completed_scan(&self) -> Result<ScanInfo> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, root_path
+            FROM scans
+            WHERE status = 'completed'
+            ORDER BY finished_at DESC, id DESC
+            LIMIT 1
+            "#,
+        )?;
+
+        let mut rows = stmt.query([])?;
+        let Some(row) = rows.next()? else {
+            bail!("no completed scans found; run `tidyfs scan <path>` first");
+        };
+
+        Ok(ScanInfo {
+            id: row.get(0)?,
+            root_path: PathBuf::from(row.get::<_, String>(1)?),
+        })
+    }
+
+    pub fn get_scan(&self, scan_id: i64) -> Result<ScanInfo> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, root_path
+            FROM scans
+            WHERE id = ?1
+            "#,
+        )?;
+
+        let scan = stmt
+            .query_row(params![scan_id], |row| {
+                Ok(ScanInfo {
+                    id: row.get(0)?,
+                    root_path: PathBuf::from(row.get::<_, String>(1)?),
+                })
+            })
+            .with_context(|| format!("scan id {scan_id} not found"))?;
+
+        Ok(scan)
     }
 }

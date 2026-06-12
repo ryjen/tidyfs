@@ -2,18 +2,19 @@
 
 `tidyfs` is a conservative disk-usage intelligence CLI.
 
-Milestone 1 implements a read-only analyzer:
+Milestone 2 implements:
 
 ```bash
 tidyfs scan ~
 tidyfs top
-tidyfs top --depth 2
-tidyfs top --root ~/.cache --limit 25
+tidyfs classify
+tidyfs explain ~/.cache
+tidyfs explain ~/src/project/node_modules
 ```
 
 The project goal is to build toward a safe cleanup planner, not an autonomous file deleter.
 
-## Milestone 1 scope
+## Current scope
 
 Implemented:
 
@@ -21,8 +22,9 @@ Implemented:
 - recursive filesystem scan
 - SQLite index
 - directory aggregation
+- deterministic classification
+- `explain` command
 - latest-scan lookup
-- `top` reporting
 - permission-error tolerance
 - no deletion
 - no AI
@@ -30,8 +32,8 @@ Implemented:
 
 Not implemented yet:
 
-- classification
 - cleanup rules
+- cleanup candidates
 - dry-run cleanup
 - quarantine/restore
 - adapters
@@ -41,8 +43,9 @@ Not implemented yet:
 
 ```bash
 cargo run -- scan ~
-cargo run -- top
 cargo run -- top --depth 2 --limit 20
+cargo run -- explain ~/.cache
+cargo run -- classify --summary
 ```
 
 By default, the SQLite DB is stored at:
@@ -55,12 +58,12 @@ Override with:
 
 ```bash
 tidyfs --db ./tidyfs.db scan ~
-tidyfs --db ./tidyfs.db top
+tidyfs --db ./tidyfs.db explain ~/.cache
 ```
 
 ## Safety posture
 
-Milestone 1 is read-only. It only scans metadata and writes to its own SQLite DB.
+Milestone 2 is read-only. It only scans metadata, classifies known path patterns, and writes to its own SQLite DB.
 
 It does not:
 
@@ -70,3 +73,48 @@ It does not:
 - run cleanup commands
 - call AI providers
 - inspect file contents
+
+## Classification model
+
+Classification answers:
+
+```text
+What does this path appear to be?
+```
+
+It does not answer:
+
+```text
+Should this be deleted?
+```
+
+Initial labels include:
+
+- `cache`
+- `thumbnail_cache`
+- `browser_cache`
+- `browser_profile`
+- `trash`
+- `node_cache`
+- `node_dependencies`
+- `node_build_artifacts`
+- `python_cache`
+- `python_virtualenv`
+- `python_bytecode_cache`
+- `rust_cache`
+- `rust_build_artifacts`
+- `go_cache`
+- `gradle_cache`
+- `maven_cache`
+- `docker_data`
+- `podman_data`
+- `nix_store`
+- `systemd_journal`
+- `source_repo`
+- `git_repo`
+- `database`
+- `vm_image`
+- `secret_material`
+- `unknown`
+
+Protected/sensitive labels like `secret_material`, `database`, `vm_image`, `browser_profile`, and `git_repo` are intended to be blocked by later policy/planning milestones.

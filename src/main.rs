@@ -1,4 +1,6 @@
+mod classify;
 mod db;
+mod explain;
 mod scan;
 mod top;
 mod util;
@@ -21,7 +23,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Scan a filesystem tree into the local index.
+    /// Scan a filesystem tree into the local index and classify known paths.
     Scan {
         /// Root path to scan.
         root: PathBuf,
@@ -33,6 +35,17 @@ enum Command {
         /// Include Linux pseudo-filesystems such as /proc, /sys, /dev, /run.
         #[arg(long)]
         include_pseudo: bool,
+    },
+
+    /// Run deterministic classification for an existing scan.
+    Classify {
+        /// Scan id to classify. Defaults to latest completed scan.
+        #[arg(long)]
+        scan_id: Option<i64>,
+
+        /// Print classification counts by label.
+        #[arg(long)]
+        summary: bool,
     },
 
     /// Show largest indexed directories from the latest scan by default.
@@ -52,6 +65,20 @@ enum Command {
         /// Restrict output to a subtree.
         #[arg(long)]
         root: Option<PathBuf>,
+    },
+
+    /// Explain what a path appears to be using deterministic classifications.
+    Explain {
+        /// Path to explain.
+        path: PathBuf,
+
+        /// Scan id to inspect. Defaults to latest completed scan.
+        #[arg(long)]
+        scan_id: Option<i64>,
+
+        /// Include child classifications directly under this path.
+        #[arg(long)]
+        children: bool,
     },
 }
 
@@ -73,14 +100,27 @@ fn main() -> Result<()> {
                 include_pseudo,
             };
             let result = scan::scan_path(&mut database, &root, opts)?;
+            let classified = classify::classify_scan(&mut database, result.scan_id)?;
+
             println!("scan_id: {}", result.scan_id);
             println!("root: {}", root.display());
             println!("entries: {}", result.entries);
             println!("errors: {}", result.errors);
+            println!("classifications: {}", classified.classifications);
             println!(
                 "indexed_size: {}",
                 util::format_bytes(result.total_allocated_size)
             );
+        }
+        Command::Classify { scan_id, summary } => {
+            let scan_id = database.resolve_scan_id(scan_id)?;
+            let result = classify::classify_scan(&mut database, scan_id)?;
+            println!("scan_id: {scan_id}");
+            println!("classifications: {}", result.classifications);
+
+            if summary {
+                classify::print_classification_summary(&database, scan_id)?;
+            }
         }
         Command::Top {
             scan_id,
@@ -95,6 +135,18 @@ fn main() -> Result<()> {
                 root,
             };
             top::print_top(&database, query)?;
+        }
+        Command::Explain {
+            path,
+            scan_id,
+            children,
+        } => {
+            let query = explain::ExplainQuery {
+                scan_id,
+                path,
+                children,
+            };
+            explain::print_explanation(&database, query)?;
         }
     }
 

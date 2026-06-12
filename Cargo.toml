@@ -1,6 +1,6 @@
 [package]
 name = "tidyfs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Conservative disk usage scanner and cleanup planner for developer machines"
 license = "MIT OR Apache-2.0"
@@ -11,4 +11,3 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 walkdir = "2"
-time = { version = "0.3", features = ["formatting"] }
