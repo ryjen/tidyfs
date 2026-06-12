@@ -2,18 +2,18 @@
 
 `tidyfs` is a conservative disk-usage intelligence CLI.
 
-Milestone 4 implements a read-only cleanup preview:
+Milestone 6.1 adds parallel subtree scanning plus tool-native adapter inspection and planning:
 
 ```bash
 tidyfs scan ~
-tidyfs top --depth 2
-tidyfs classify --summary
-tidyfs explain ~/.cache
+tidyfs scan ~ --jobs 8
 tidyfs plan --safe
-tidyfs clean --dry-run
+tidyfs adapters
+tidyfs plan --risk medium --include-adapters
+tidyfs clean --dry-run --risk medium
 ```
 
-The project goal is to build toward a safe cleanup planner, not an autonomous file deleter.
+The project goal is to build a safe cleanup planner, not an autonomous file deleter.
 
 ## Current scope
 
@@ -31,26 +31,49 @@ Implemented:
 - `plan` command
 - blocked-candidate reporting
 - `clean --dry-run`
-- no filesystem mutation
+- reversible quarantine execution
+- action logging
+- `actions` listing
+- `restore`
+- read-only tool-native adapters
+- no permanent deletion
 - no AI
-- no adapters
 
-Not implemented yet:
+Adapters currently inspect/report only. They do not execute cleanup commands.
 
-- actual cleanup
-- quarantine/restore
-- adapter execution
-- AI explanations
+## Adapter commands
+
+```bash
+cargo run -- adapters
+cargo run -- plan --risk medium --include-adapters
+```
+
+Supported adapters:
+
+- systemd journal
+- Docker
+- Podman
+- Nix
+- pnpm
+- pip
+- uv
+- Go
 
 ## Install / run
 
 ```bash
 cargo run -- scan ~
+cargo run -- scan ~ --jobs 8
 cargo run -- top --depth 2 --limit 20
 cargo run -- classify --summary
 cargo run -- explain ~/.cache --children
 cargo run -- plan --safe
 cargo run -- clean --dry-run
+cargo run -- clean --safe --interactive
+cargo run -- actions
+cargo run -- restore --latest
+cargo run -- adapters
+cargo run -- plan --risk medium --include-adapters
 ```
 
 By default, the SQLite DB is stored at:
@@ -59,26 +82,38 @@ By default, the SQLite DB is stored at:
 ~/.local/share/tidyfs/tidyfs.db
 ```
 
-Override with:
+Quarantine data is stored at:
 
-```bash
-tidyfs --db ./tidyfs.db scan ~
-tidyfs --db ./tidyfs.db plan --safe
-tidyfs --db ./tidyfs.db clean --dry-run
+```text
+~/.local/share/tidyfs/quarantine/
 ```
 
 ## Safety posture
 
-Milestone 4 is still read-only. It creates cleanup candidates and previews actions, but does not execute anything.
+Milestone 6 supports real filesystem mutation only through quarantine.
 
 It does not:
 
-- delete files
-- move files
-- follow symlinks
-- run cleanup commands
+- permanently delete files
+- purge quarantine
+- execute adapter cleanup commands
+- run arbitrary shell commands
 - call AI providers
 - inspect file contents
+
+Real quarantine execution requires both:
+
+```bash
+--safe --interactive
+```
+
+Adapter candidates use:
+
+```text
+action_type = tool_native
+```
+
+They are visible in plans and dry-runs, but are not executable yet.
 
 ## Planning model
 
@@ -86,57 +121,30 @@ It does not:
 scan facts
 -> deterministic classifications
 -> YAML cleanup rules
+-> adapter inspection
 -> policy validation
 -> cleanup candidates / blocked candidates
--> report
 -> dry-run preview
+-> interactive quarantine execution for reversible file candidates only
+-> action log
+-> restore
 ```
 
-Classification answers:
 
-```text
-What does this path appear to be?
-```
+## Parallel scanning
 
-Planning answers:
-
-```text
-Could this be proposed for cleanup under the selected risk threshold?
-```
-
-Dry-run answers:
-
-```text
-What exact actions would be attempted later?
-```
-
-## Risk tiers
-
-| Risk | Meaning | Default behavior |
-|---|---|---|
-| low | known regenerable cache/temp data | shown by `plan --safe` |
-| medium | regenerable but project/tool-impacting | requires `--risk medium` |
-| high | risky user/application data | blocked/report-only |
-| forbidden | secrets, DBs, VMs, git metadata, browser profiles | blocked |
-
-## Example
+The scanner uses parallel workers over immediate child subtrees and a single SQLite writer.
 
 ```bash
-tidyfs plan --safe
-tidyfs clean --dry-run
+tidyfs scan ~ --jobs 8
 ```
 
-Output shape:
+Why this shape:
 
-```text
-Dry-run cleanup preview
+- metadata reads are parallelized
+- SQLite writes remain serialized and simple
+- aggregation remains deterministic
+- no shared mutable filesystem state
+- no deletion behavior changes
 
-Would process:
-  3.2 GiB  ~/.cache/pip
-           Candidate: 42
-           Rule: python-pip-cache-old
-           Risk: low
-           Action: report_only
-           Reversible: yes
-           Reason: Python package cache is normally regenerable.
-```
+This is not the final high-performance design, but it removes the obvious single-threaded traversal bottleneck while preserving the safety model.

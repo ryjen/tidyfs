@@ -73,6 +73,18 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+pub fn data_dir() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is not set")?;
+
+    Ok(home.join(".local/share/tidyfs"))
+}
+
+pub fn quarantine_root() -> Result<PathBuf> {
+    Ok(data_dir()?.join("quarantine"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::format_bytes;

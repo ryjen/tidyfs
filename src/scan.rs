@@ -5,6 +5,8 @@ use rusqlite::{params, Transaction};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
 use walkdir::{DirEntry, WalkDir};
 
 #[cfg(unix)]
@@ -14,6 +16,7 @@ use std::os::unix::fs::MetadataExt;
 pub struct ScanOptions {
     pub one_file_system: bool,
     pub include_pseudo: bool,
+    pub jobs: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -73,6 +76,15 @@ impl EntryType {
     }
 }
 
+#[derive(Debug)]
+enum ScanMessage {
+    Entry(EntryRecord),
+    Error {
+        path: Option<PathBuf>,
+        error: String,
+    },
+}
+
 pub fn scan_path(database: &mut Database, root: &Path, options: ScanOptions) -> Result<ScanResult> {
     let started_at = util::unix_now();
     let root_dev = fs::symlink_metadata(root).ok().and_then(|m| metadata_dev(&m));
@@ -86,32 +98,75 @@ pub fn scan_path(database: &mut Database, root: &Path, options: ScanOptions) -> 
     let mut entries = 0_u64;
     let mut errors = 0_u64;
 
-    let walker = WalkDir::new(root)
-        .follow_links(false)
-        .same_file_system(options.one_file_system)
-        .into_iter()
-        .filter_entry(|entry| should_descend(entry, root, options, root_dev));
-
-    for item in walker {
-        match item {
-            Ok(entry) => match record_from_dir_entry(&entry) {
-                Ok(record) => {
-                    aggregate_record(root, &record, &mut aggregations);
-                    insert_entry(&tx, scan_id, &record)?;
-                    entries += 1;
-                }
-                Err(err) => {
-                    insert_scan_error(&tx, scan_id, Some(entry.path()), &format!("{err:#}"))?;
-                    errors += 1;
-                }
-            },
-            Err(err) => {
-                let path = err.path().map(Path::to_path_buf);
-                insert_scan_error(&tx, scan_id, path.as_deref(), &err.to_string())?;
-                errors += 1;
-            }
+    match record_from_path(root) {
+        Ok(record) => {
+            aggregate_record(root, &record, &mut aggregations);
+            insert_entry(&tx, scan_id, &record)?;
+            entries += 1;
+        }
+        Err(err) => {
+            insert_scan_error(&tx, scan_id, Some(root), &format!("{err:#}"))?;
+            errors += 1;
         }
     }
+
+    let children = immediate_children(root, options)?;
+    let jobs = resolve_jobs(options.jobs, children.len());
+
+    if children.is_empty() {
+        insert_directory_totals(&tx, scan_id, &aggregations)?;
+        finish_scan(&tx, scan_id, util::unix_now())?;
+        tx.commit()?;
+
+        return Ok(ScanResult {
+            scan_id,
+            entries,
+            errors,
+            total_allocated_size: aggregations
+                .get(root)
+                .map(|agg| agg.allocated_size)
+                .unwrap_or_default(),
+        });
+    }
+
+    let (sender, receiver) = mpsc::channel::<ScanMessage>();
+    let chunks = chunk_paths(children, jobs);
+
+    thread::scope(|scope| {
+        for chunk in chunks {
+            let sender = sender.clone();
+            let root = root.to_path_buf();
+
+            scope.spawn(move || {
+                scan_worker(chunk, &root, options, root_dev, sender);
+            });
+        }
+
+        drop(sender);
+
+        for message in receiver {
+            match message {
+                ScanMessage::Entry(record) => {
+                    aggregate_record(root, &record, &mut aggregations);
+                    if let Err(err) = insert_entry(&tx, scan_id, &record) {
+                        let _ = insert_scan_error(
+                            &tx,
+                            scan_id,
+                            Some(&record.path),
+                            &format!("failed to insert entry: {err:#}"),
+                        );
+                        errors += 1;
+                    } else {
+                        entries += 1;
+                    }
+                }
+                ScanMessage::Error { path, error } => {
+                    let _ = insert_scan_error(&tx, scan_id, path.as_deref(), &error);
+                    errors += 1;
+                }
+            }
+        }
+    });
 
     let total_allocated_size = aggregations
         .get(root)
@@ -128,6 +183,104 @@ pub fn scan_path(database: &mut Database, root: &Path, options: ScanOptions) -> 
         errors,
         total_allocated_size,
     })
+}
+
+fn scan_worker(
+    roots: Vec<PathBuf>,
+    scan_root: &Path,
+    options: ScanOptions,
+    root_dev: Option<u64>,
+    sender: mpsc::Sender<ScanMessage>,
+) {
+    for subtree_root in roots {
+        let walker = WalkDir::new(&subtree_root)
+            .follow_links(false)
+            .same_file_system(options.one_file_system)
+            .into_iter()
+            .filter_entry(|entry| should_descend(entry, scan_root, options, root_dev));
+
+        for item in walker {
+            match item {
+                Ok(entry) => match record_from_path(entry.path()) {
+                    Ok(record) => {
+                        if sender.send(ScanMessage::Entry(record)).is_err() {
+                            return;
+                        }
+                    }
+                    Err(err) => {
+                        if sender
+                            .send(ScanMessage::Error {
+                                path: Some(entry.path().to_path_buf()),
+                                error: format!("{err:#}"),
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                },
+                Err(err) => {
+                    if sender
+                        .send(ScanMessage::Error {
+                            path: err.path().map(Path::to_path_buf),
+                            error: err.to_string(),
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn immediate_children(root: &Path, options: ScanOptions) -> Result<Vec<PathBuf>> {
+    let mut children = Vec::new();
+
+    if !root.is_dir() {
+        return Ok(children);
+    }
+
+    for item in fs::read_dir(root).with_context(|| format!("reading {}", root.display()))? {
+        match item {
+            Ok(entry) => {
+                let path = entry.path();
+                if !options.include_pseudo && is_linux_pseudo_path(&path) {
+                    continue;
+                }
+                children.push(path);
+            }
+            Err(err) => {
+                // Root-level read_dir errors are rare and will also be visible through walk errors
+                // in typical cases. Keep this function fallible only for opening the root.
+                eprintln!("warning: failed to read child of {}: {err}", root.display());
+            }
+        }
+    }
+
+    Ok(children)
+}
+
+fn resolve_jobs(requested: Option<usize>, work_items: usize) -> usize {
+    let default = thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+
+    requested
+        .unwrap_or(default)
+        .max(1)
+        .min(work_items.max(1))
+}
+
+fn chunk_paths(paths: Vec<PathBuf>, jobs: usize) -> Vec<Vec<PathBuf>> {
+    let mut chunks = vec![Vec::new(); jobs.max(1)];
+
+    for (idx, path) in paths.into_iter().enumerate() {
+        chunks[idx % jobs].push(path);
+    }
+
+    chunks.into_iter().filter(|chunk| !chunk.is_empty()).collect()
 }
 
 fn begin_scan(tx: &Transaction<'_>, root: &Path, options: ScanOptions, started_at: i64) -> Result<i64> {
@@ -180,8 +333,8 @@ fn is_linux_pseudo_path(path: &Path) -> bool {
     pseudo.iter().any(|prefix| path.starts_with(prefix))
 }
 
-fn record_from_dir_entry(entry: &DirEntry) -> Result<EntryRecord> {
-    let path = entry.path().to_path_buf();
+fn record_from_path(path: &Path) -> Result<EntryRecord> {
+    let path = path.to_path_buf();
     let metadata = fs::symlink_metadata(&path)
         .with_context(|| format!("reading metadata for {}", path.display()))?;
 

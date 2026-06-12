@@ -1,6 +1,6 @@
 [package]
 name = "tidyfs"
-version = "0.4.0"
+version = "0.6.1"
 edition = "2021"
 description = "Conservative disk usage scanner and cleanup planner for developer machines"
 license = "MIT OR Apache-2.0"

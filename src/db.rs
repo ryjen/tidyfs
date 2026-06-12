@@ -136,6 +136,29 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_cleanup_candidates_scan_size
               ON cleanup_candidates(scan_id, size_bytes DESC);
+
+            CREATE TABLE IF NOT EXISTS actions (
+              id INTEGER PRIMARY KEY,
+              timestamp INTEGER NOT NULL,
+              scan_id INTEGER,
+              candidate_id INTEGER,
+              original_path TEXT NOT NULL,
+              quarantine_path TEXT,
+              action_type TEXT NOT NULL,
+              size_bytes INTEGER,
+              rule_id TEXT,
+              risk TEXT,
+              status TEXT NOT NULL,
+              error TEXT,
+              restored_at INTEGER,
+              restore_error TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_actions_timestamp
+              ON actions(timestamp DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_actions_status
+              ON actions(status);
             "#,
         )?;
 

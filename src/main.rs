@@ -1,5 +1,8 @@
 mod classify;
 mod clean;
+mod actions;
+mod adapters;
+mod restore;
 mod db;
 mod explain;
 mod plan;
@@ -38,6 +41,10 @@ enum Command {
         /// Include Linux pseudo-filesystems such as /proc, /sys, /dev, /run.
         #[arg(long)]
         include_pseudo: bool,
+
+        /// Number of parallel scanner workers. Defaults to available parallelism.
+        #[arg(long)]
+        jobs: Option<usize>,
     },
 
     /// Run deterministic classification for an existing scan.
@@ -106,6 +113,10 @@ enum Command {
         #[arg(long, default_value_t = true)]
         include_blocked: bool,
 
+        /// Include read-only tool-native adapter candidates.
+        #[arg(long)]
+        include_adapters: bool,
+
         /// Limit printed allowed candidates.
         #[arg(long, default_value_t = 50)]
         limit: usize,
@@ -117,9 +128,13 @@ enum Command {
         #[arg(long)]
         scan_id: Option<i64>,
 
-        /// Required in Milestone 4. No filesystem changes are made.
+        /// Preview only. No filesystem changes are made.
         #[arg(long)]
         dry_run: bool,
+
+        /// Required for reversible cleanup execution.
+        #[arg(long)]
+        interactive: bool,
 
         /// Equivalent to --risk low.
         #[arg(long)]
@@ -136,6 +151,27 @@ enum Command {
         /// Limit printed candidates.
         #[arg(long, default_value_t = 50)]
         limit: usize,
+    },
+
+    /// Inspect available tool-native adapters.
+    Adapters,
+
+    /// List recorded cleanup/restore actions.
+    Actions {
+        /// Maximum number of actions to show.
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+    },
+
+    /// Restore a quarantined action.
+    Restore {
+        /// Restore a specific action id.
+        #[arg(long)]
+        action: Option<i64>,
+
+        /// Restore the latest quarantined action.
+        #[arg(long)]
+        latest: bool,
     },
 }
 
@@ -169,11 +205,13 @@ fn main() -> Result<()> {
             root,
             one_file_system,
             include_pseudo,
+            jobs,
         } => {
             let root = util::normalize_existing_path(&root)?;
             let opts = scan::ScanOptions {
                 one_file_system,
                 include_pseudo,
+                jobs,
             };
             let result = scan::scan_path(&mut database, &root, opts)?;
             let classified = classify::classify_scan(&mut database, result.scan_id)?;
@@ -230,6 +268,7 @@ fn main() -> Result<()> {
             risk,
             root,
             include_blocked,
+            include_adapters,
             limit,
         } => {
             let max_risk = if safe { rules::Risk::Low } else { risk.into() };
@@ -238,6 +277,7 @@ fn main() -> Result<()> {
                 max_risk,
                 root,
                 include_blocked,
+                include_adapters,
                 limit,
             };
             plan::run_plan(&mut database, query)?;
@@ -245,6 +285,7 @@ fn main() -> Result<()> {
         Command::Clean {
             scan_id,
             dry_run,
+            interactive,
             safe,
             risk,
             root,
@@ -254,11 +295,28 @@ fn main() -> Result<()> {
             let query = clean::CleanQuery {
                 scan_id,
                 dry_run,
+                safe,
+                interactive,
                 max_risk,
                 root,
                 limit,
             };
             clean::run_clean(&database, query)?;
+        }
+        Command::Adapters => {
+            adapters::print_adapters();
+        }
+        Command::Actions { limit } => {
+            actions::print_actions(&database, actions::ActionsQuery { limit })?;
+        }
+        Command::Restore { action, latest } => {
+            restore::run_restore(
+                &database,
+                restore::RestoreQuery {
+                    action_id: action,
+                    latest,
+                },
+            )?;
         }
     }
 

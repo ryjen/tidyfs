@@ -1,3 +1,4 @@
+use crate::adapters;
 use crate::db::Database;
 use crate::rules::{self, Rule, Risk};
 use crate::util;
@@ -12,6 +13,7 @@ pub struct PlanQuery {
     pub max_risk: Risk,
     pub root: Option<PathBuf>,
     pub include_blocked: bool,
+    pub include_adapters: bool,
     pub limit: usize,
 }
 
@@ -80,6 +82,25 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
                     blocked_reason,
                 });
             }
+        }
+    }
+
+    if query.include_adapters {
+        for adapter_candidate in adapters::build_adapter_candidates(query.max_risk) {
+            let blocked = adapter_candidate.blocked_reason.is_some();
+            candidates.push(PlannedCandidate {
+                path: adapter_candidate.path,
+                size_bytes: adapter_candidate.size_bytes,
+                rule_id: adapter_candidate.rule_id,
+                rule_label: adapter_candidate.rule_label,
+                category: adapter_candidate.category,
+                risk: adapter_candidate.risk,
+                action_type: adapter_candidate.action_type.to_string(),
+                reversible: adapter_candidate.reversible,
+                reason: adapter_candidate.reason,
+                blocked,
+                blocked_reason: adapter_candidate.blocked_reason,
+            });
         }
     }
 
@@ -290,6 +311,7 @@ fn print_plan(
     println!("scan_id: {scan_id}");
     println!("scan_root: {}", scan_root.display());
     println!("risk_threshold: {max_risk}");
+    println!("include_adapters: {}", candidates.iter().any(|c| c.path.to_string_lossy().starts_with("adapter://")));
     println!("allowed_candidates: {}", allowed.len());
     println!("allowed_reclaimable: {}", util::format_bytes(allowed_bytes));
     println!("blocked_or_report_only: {}", blocked.len());
