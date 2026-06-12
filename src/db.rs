@@ -112,6 +112,30 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_classifications_scan_label
               ON classifications(scan_id, label);
+
+            CREATE TABLE IF NOT EXISTS cleanup_candidates (
+              id INTEGER PRIMARY KEY,
+              scan_id INTEGER NOT NULL,
+              path TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL,
+              rule_id TEXT NOT NULL,
+              rule_label TEXT NOT NULL,
+              category TEXT NOT NULL,
+              risk TEXT NOT NULL,
+              action_type TEXT NOT NULL,
+              reversible INTEGER NOT NULL,
+              reason TEXT NOT NULL,
+              blocked INTEGER NOT NULL DEFAULT 0,
+              blocked_reason TEXT,
+              created_at INTEGER NOT NULL,
+              FOREIGN KEY(scan_id) REFERENCES scans(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cleanup_candidates_scan_blocked
+              ON cleanup_candidates(scan_id, blocked);
+
+            CREATE INDEX IF NOT EXISTS idx_cleanup_candidates_scan_size
+              ON cleanup_candidates(scan_id, size_bytes DESC);
             "#,
         )?;
 

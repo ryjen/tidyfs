@@ -13,7 +13,6 @@ pub struct ClassificationResult {
 struct EntryForClassify {
     path: PathBuf,
     name: String,
-    entry_type: String,
     extension: Option<String>,
 }
 
@@ -95,7 +94,7 @@ pub fn print_classification_summary(database: &Database, scan_id: i64) -> Result
 fn load_entries(database: &Database, scan_id: i64) -> Result<Vec<EntryForClassify>> {
     let mut stmt = database.connection().prepare(
         r#"
-        SELECT path, name, entry_type, extension
+        SELECT path, name, extension
         FROM entries
         WHERE scan_id = ?1
         "#,
@@ -106,8 +105,7 @@ fn load_entries(database: &Database, scan_id: i64) -> Result<Vec<EntryForClassif
             Ok(EntryForClassify {
                 path: PathBuf::from(row.get::<_, String>(0)?),
                 name: row.get(1)?,
-                entry_type: row.get(2)?,
-                extension: row.get(3)?,
+                extension: row.get(2)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -121,211 +119,107 @@ fn classify_entry(entry: &EntryForClassify, path_set: &HashSet<PathBuf>) -> Vec<
     let name = entry.name.as_str();
 
     if is_secret_path(path, name) {
-        out.push(classification(
-            "secret_material",
-            0.99,
-            "known secret/key/password-store path",
-        ));
+        out.push(classification("secret_material", 0.99, "known secret/key/password-store path"));
     }
 
     if name == ".git" {
-        out.push(classification(
-            "git_repo",
-            0.99,
-            "Git metadata directory",
-        ));
+        out.push(classification("git_repo", 0.99, "Git metadata directory"));
     }
 
     if has_ancestor_named(path, ".git") || child_exists(path, ".git", path_set) {
-        out.push(classification(
-            "source_repo",
-            0.90,
-            "path is inside or contains a Git repository",
-        ));
+        out.push(classification("source_repo", 0.90, "path is inside or contains a Git repository"));
     }
 
     if name == ".env" || name.ends_with(".env") || name.starts_with(".env.") {
-        out.push(classification(
-            "secret_material",
-            0.98,
-            "environment file pattern",
-        ));
+        out.push(classification("secret_material", 0.98, "environment file pattern"));
     }
 
     if is_cache_path(path, name) {
-        out.push(classification(
-            "cache",
-            0.85,
-            "path matches common cache naming/location pattern",
-        ));
+        out.push(classification("cache", 0.85, "path matches common cache naming/location pattern"));
     }
 
     if path_contains(path, ".cache/thumbnails") || path_contains(path, "thumbnails") && has_ancestor_named(path, ".cache") {
-        out.push(classification(
-            "thumbnail_cache",
-            0.95,
-            "desktop thumbnail cache path",
-        ));
+        out.push(classification("thumbnail_cache", 0.95, "desktop thumbnail cache path"));
     }
 
     if path_contains(path, ".local/share/Trash") || path_contains(path, ".Trash") {
-        out.push(classification(
-            "trash",
-            0.95,
-            "trash directory path",
-        ));
+        out.push(classification("trash", 0.95, "trash directory path"));
     }
 
     if is_browser_profile(path) {
-        out.push(classification(
-            "browser_profile",
-            0.95,
-            "browser profile/storage path; should be protected",
-        ));
+        out.push(classification("browser_profile", 0.95, "browser profile/storage path; should be protected"));
     }
 
     if is_browser_cache(path) {
-        out.push(classification(
-            "browser_cache",
-            0.88,
-            "browser cache path",
-        ));
+        out.push(classification("browser_cache", 0.88, "browser cache path"));
     }
 
     if name == "node_modules" {
-        out.push(classification(
-            "node_dependencies",
-            0.97,
-            "Node.js dependency directory",
-        ));
+        out.push(classification("node_dependencies", 0.97, "Node.js dependency directory"));
     }
 
     if path_contains(path, ".npm") || path_contains(path, ".cache/yarn") || path_contains(path, ".cache/pnpm") {
-        out.push(classification(
-            "node_cache",
-            0.90,
-            "Node package-manager cache/store path",
-        ));
+        out.push(classification("node_cache", 0.90, "Node package-manager cache/store path"));
     }
 
     if matches!(name, ".next" | ".nuxt" | "dist" | "build" | ".turbo") && has_node_project_marker(path, path_set) {
-        out.push(classification(
-            "node_build_artifacts",
-            0.82,
-            "common JavaScript/TypeScript build output in a Node project",
-        ));
+        out.push(classification("node_build_artifacts", 0.82, "common JavaScript/TypeScript build output in a Node project"));
     }
 
     if path_contains(path, ".cache/pip") || path_contains(path, ".cache/uv") || path_contains(path, ".cache/pypoetry") {
-        out.push(classification(
-            "python_cache",
-            0.92,
-            "Python package/tool cache path",
-        ));
+        out.push(classification("python_cache", 0.92, "Python package/tool cache path"));
     }
 
     if matches!(name, ".venv" | "venv" | "virtualenv") {
-        out.push(classification(
-            "python_virtualenv",
-            0.90,
-            "Python virtual environment directory",
-        ));
+        out.push(classification("python_virtualenv", 0.90, "Python virtual environment directory"));
     }
 
     if name == "__pycache__" || matches!(entry.extension.as_deref(), Some("pyc") | Some("pyo")) {
-        out.push(classification(
-            "python_bytecode_cache",
-            0.95,
-            "Python bytecode cache",
-        ));
+        out.push(classification("python_bytecode_cache", 0.95, "Python bytecode cache"));
     }
 
     if path_contains(path, ".cargo/registry") || path_contains(path, ".cargo/git") {
-        out.push(classification(
-            "rust_cache",
-            0.90,
-            "Cargo registry/git cache path",
-        ));
+        out.push(classification("rust_cache", 0.90, "Cargo registry/git cache path"));
     }
 
     if name == "target" && has_rust_project_marker(path, path_set) {
-        out.push(classification(
-            "rust_build_artifacts",
-            0.92,
-            "Rust Cargo target directory",
-        ));
+        out.push(classification("rust_build_artifacts", 0.92, "Rust Cargo target directory"));
     }
 
     if path_contains(path, ".cache/go-build") || path_contains(path, "/pkg/mod") {
-        out.push(classification(
-            "go_cache",
-            0.80,
-            "Go build or module cache path",
-        ));
+        out.push(classification("go_cache", 0.80, "Go build or module cache path"));
     }
 
     if path_contains(path, ".gradle/caches") || path_contains(path, ".gradle/daemon") {
-        out.push(classification(
-            "gradle_cache",
-            0.90,
-            "Gradle cache/daemon path",
-        ));
+        out.push(classification("gradle_cache", 0.90, "Gradle cache/daemon path"));
     }
 
     if path_contains(path, ".m2/repository") {
-        out.push(classification(
-            "maven_cache",
-            0.92,
-            "Maven local repository cache",
-        ));
+        out.push(classification("maven_cache", 0.92, "Maven local repository cache"));
     }
 
     if path_contains(path, "/var/lib/docker") || path_contains(path, ".local/share/docker") {
-        out.push(classification(
-            "docker_data",
-            0.95,
-            "Docker data directory",
-        ));
+        out.push(classification("docker_data", 0.95, "Docker data directory"));
     }
 
     if path_contains(path, "/var/lib/containers") || path_contains(path, ".local/share/containers") {
-        out.push(classification(
-            "podman_data",
-            0.90,
-            "Podman/containers storage directory",
-        ));
+        out.push(classification("podman_data", 0.90, "Podman/containers storage directory"));
     }
 
     if path.starts_with("/nix/store") || path_contains(path, "/nix/store") {
-        out.push(classification(
-            "nix_store",
-            0.99,
-            "Nix store path; must be cleaned only through Nix tooling",
-        ));
+        out.push(classification("nix_store", 0.99, "Nix store path; must be cleaned only through Nix tooling"));
     }
 
     if path_contains(path, "/var/log/journal") || path_contains(path, "/run/log/journal") {
-        out.push(classification(
-            "systemd_journal",
-            0.95,
-            "systemd journal path",
-        ));
+        out.push(classification("systemd_journal", 0.95, "systemd journal path"));
     }
 
     if is_database(entry) {
-        out.push(classification(
-            "database",
-            0.92,
-            "database file extension/name",
-        ));
+        out.push(classification("database", 0.92, "database file extension/name"));
     }
 
     if is_vm_image(entry) {
-        out.push(classification(
-            "vm_image",
-            0.95,
-            "virtual machine or disk image extension",
-        ));
+        out.push(classification("vm_image", 0.95, "virtual machine or disk image extension"));
     }
 
     out
@@ -389,11 +283,7 @@ fn is_vm_image(entry: &EntryForClassify) -> bool {
 }
 
 fn has_node_project_marker(path: &Path, path_set: &HashSet<PathBuf>) -> bool {
-    ancestor_contains_any(
-        path,
-        path_set,
-        &["package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json"],
-    )
+    ancestor_contains_any(path, path_set, &["package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json"])
 }
 
 fn has_rust_project_marker(path: &Path, path_set: &HashSet<PathBuf>) -> bool {

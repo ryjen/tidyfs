@@ -1,0 +1,209 @@
+- id: trash-old
+  label: Existing trash older than 30 days
+  category: trash
+  risk: low
+  action_type: report_only
+  reversible: true
+  match:
+    labels_any: ["trash"]
+    older_than_days: 30
+  reason: Existing trash is a strong cleanup candidate, but permanent purge should wait for an explicit executor milestone.
+
+- id: linux-thumbnail-cache-old
+  label: Thumbnail cache older than 60 days
+  category: thumbnail_cache
+  risk: low
+  action_type: report_only
+  reversible: true
+  match:
+    labels_any: ["thumbnail_cache"]
+    older_than_days: 60
+  reason: Desktop thumbnail caches are generated data and are normally safe to regenerate.
+
+- id: python-pip-cache-old
+  label: Python pip cache older than 30 days
+  category: python_cache
+  risk: low
+  action_type: report_only
+  reversible: true
+  match:
+    labels_any: ["python_cache"]
+    path_contains_any: ["/.cache/pip"]
+    older_than_days: 30
+  reason: Python package cache is normally regenerable, but future installs may be slower or require network access.
+
+- id: python-bytecode-cache
+  label: Python bytecode cache
+  category: python_bytecode_cache
+  risk: low
+  action_type: report_only
+  reversible: true
+  match:
+    labels_any: ["python_bytecode_cache"]
+  reason: Python bytecode caches are regenerated automatically.
+
+- id: node-cache-old
+  label: Node package cache older than 30 days
+  category: node_cache
+  risk: low
+  action_type: report_only
+  reversible: true
+  match:
+    labels_any: ["node_cache"]
+    older_than_days: 30
+  reason: Node package-manager caches are usually regenerable, though future installs may be slower.
+
+- id: node-modules-project-deps
+  label: Node dependencies in project workspace
+  category: node_dependencies
+  risk: medium
+  action_type: report_only
+  reversible: true
+  match:
+    labels_any: ["node_dependencies"]
+    path_basename: "node_modules"
+  reason: node_modules is usually regenerable from a lockfile, but removing it can interrupt active development and require network access.
+
+- id: node-build-artifacts
+  label: JavaScript/TypeScript build artifacts
+  category: node_build_artifacts
+  risk: medium
+  action_type: report_only
+  reversible: true
+  match:
+    labels_any: ["node_build_artifacts"]
+  reason: Build output is usually regenerable, but it may contain local artifacts or work-in-progress outputs.
+
+- id: rust-target-build-artifacts
+  label: Rust target directory
+  category: rust_build_artifacts
+  risk: medium
+  action_type: report_only
+  reversible: true
+  match:
+    labels_any: ["rust_build_artifacts"]
+    path_basename: "target"
+  reason: Cargo target directories are generally regenerable but expensive to rebuild.
+
+- id: go-cache-old
+  label: Go cache older than 30 days
+  category: go_cache
+  risk: low
+  action_type: report_only
+  reversible: true
+  match:
+    labels_any: ["go_cache"]
+    older_than_days: 30
+  reason: Go build cache is normally regenerable.
+
+- id: gradle-cache-old
+  label: Gradle cache older than 30 days
+  category: gradle_cache
+  risk: medium
+  action_type: report_only
+  reversible: true
+  match:
+    labels_any: ["gradle_cache"]
+    older_than_days: 30
+  reason: Gradle caches are usually regenerable but can be expensive to rebuild and may affect offline work.
+
+- id: maven-cache-old
+  label: Maven local repository older than 60 days
+  category: maven_cache
+  risk: medium
+  action_type: report_only
+  reversible: true
+  match:
+    labels_any: ["maven_cache"]
+    older_than_days: 60
+  reason: Maven local repository entries are usually regenerable but can affect offline builds.
+
+- id: docker-data-report
+  label: Docker data should be cleaned through Docker adapter
+  category: docker_data
+  risk: high
+  action_type: report_only
+  reversible: false
+  match:
+    labels_any: ["docker_data"]
+  reason: Docker internals should not be manually deleted. Use a Docker adapter with allowlisted commands.
+
+- id: podman-data-report
+  label: Podman data should be cleaned through Podman adapter
+  category: podman_data
+  risk: high
+  action_type: report_only
+  reversible: false
+  match:
+    labels_any: ["podman_data"]
+  reason: Podman/container storage should not be manually deleted. Use a Podman adapter with allowlisted commands.
+
+- id: nix-store-report
+  label: Nix store should be cleaned through Nix garbage collection
+  category: nix_store
+  risk: high
+  action_type: report_only
+  reversible: false
+  match:
+    labels_any: ["nix_store"]
+  reason: Nix store paths must not be manually deleted. Use nix-collect-garbage.
+
+- id: systemd-journal-report
+  label: systemd journal should be cleaned through journalctl
+  category: systemd_journal
+  risk: medium
+  action_type: report_only
+  reversible: false
+  match:
+    labels_any: ["systemd_journal"]
+  reason: systemd journals should be cleaned through journalctl vacuum commands.
+
+- id: database-report
+  label: Database file
+  category: database
+  risk: forbidden
+  action_type: report_only
+  reversible: false
+  match:
+    labels_any: ["database"]
+  reason: Databases are user/application data and must not be cleaned by default.
+
+- id: vm-image-report
+  label: Virtual machine or disk image
+  category: vm_image
+  risk: forbidden
+  action_type: report_only
+  reversible: false
+  match:
+    labels_any: ["vm_image"]
+  reason: VM and disk images are high-value user/application data and must not be cleaned by default.
+
+- id: secret-material-report
+  label: Secret material
+  category: secret_material
+  risk: forbidden
+  action_type: report_only
+  reversible: false
+  match:
+    labels_any: ["secret_material"]
+  reason: Secrets, keys, credentials, and password stores are forbidden cleanup targets.
+
+- id: browser-profile-report
+  label: Browser profile
+  category: browser_profile
+  risk: forbidden
+  action_type: report_only
+  reversible: false
+  match:
+    labels_any: ["browser_profile"]
+  reason: Browser profiles contain user data, credentials, sessions, and history; they are forbidden cleanup targets.
+
+- id: git-metadata-report
+  label: Git metadata
+  category: git_repo
+  risk: forbidden
+  action_type: report_only
+  reversible: false
+  match:
+    labels_any: ["git_repo"]
+  reason: Git metadata is repository state and must never be treated as cleanup data.

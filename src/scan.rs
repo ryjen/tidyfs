@@ -75,9 +75,7 @@ impl EntryType {
 
 pub fn scan_path(database: &mut Database, root: &Path, options: ScanOptions) -> Result<ScanResult> {
     let started_at = util::unix_now();
-    let root_dev = fs::symlink_metadata(root)
-        .ok()
-        .and_then(|m| metadata_dev(&m));
+    let root_dev = fs::symlink_metadata(root).ok().and_then(|m| metadata_dev(&m));
 
     let tx = database.transaction()?;
     let scan_id = begin_scan(&tx, root, options, started_at)?;
@@ -103,23 +101,13 @@ pub fn scan_path(database: &mut Database, root: &Path, options: ScanOptions) -> 
                     entries += 1;
                 }
                 Err(err) => {
-                    insert_scan_error(
-                        &tx,
-                        scan_id,
-                        Some(entry.path()),
-                        &format!("{err:#}"),
-                    )?;
+                    insert_scan_error(&tx, scan_id, Some(entry.path()), &format!("{err:#}"))?;
                     errors += 1;
                 }
             },
             Err(err) => {
                 let path = err.path().map(Path::to_path_buf);
-                insert_scan_error(
-                    &tx,
-                    scan_id,
-                    path.as_deref(),
-                    &err.to_string(),
-                )?;
+                insert_scan_error(&tx, scan_id, path.as_deref(), &err.to_string())?;
                 errors += 1;
             }
         }
@@ -167,12 +155,7 @@ fn finish_scan(tx: &Transaction<'_>, scan_id: i64, finished_at: i64) -> Result<(
     Ok(())
 }
 
-fn should_descend(
-    entry: &DirEntry,
-    root: &Path,
-    options: ScanOptions,
-    root_dev: Option<u64>,
-) -> bool {
+fn should_descend(entry: &DirEntry, root: &Path, options: ScanOptions, root_dev: Option<u64>) -> bool {
     if entry.path() == root {
         return true;
     }
@@ -221,10 +204,7 @@ fn record_from_dir_entry(entry: &DirEntry) -> Result<EntryRecord> {
 
     Ok(EntryRecord {
         parent_path: path.parent().map(Path::to_path_buf),
-        name: path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string_lossy().to_string()),
+        name: path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string_lossy().to_string()),
         extension: path.extension().map(|e| e.to_string_lossy().to_string()),
         path,
         entry_type,
@@ -319,11 +299,7 @@ fn insert_entry(tx: &Transaction<'_>, scan_id: i64, record: &EntryRecord) -> Res
     Ok(())
 }
 
-fn insert_directory_totals(
-    tx: &Transaction<'_>,
-    scan_id: i64,
-    aggregations: &HashMap<PathBuf, DirAgg>,
-) -> Result<()> {
+fn insert_directory_totals(tx: &Transaction<'_>, scan_id: i64, aggregations: &HashMap<PathBuf, DirAgg>) -> Result<()> {
     let mut stmt = tx.prepare(
         r#"
         INSERT INTO directory_totals(
@@ -350,12 +326,7 @@ fn insert_directory_totals(
     Ok(())
 }
 
-fn insert_scan_error(
-    tx: &Transaction<'_>,
-    scan_id: i64,
-    path: Option<&Path>,
-    error: &str,
-) -> Result<()> {
+fn insert_scan_error(tx: &Transaction<'_>, scan_id: i64, path: Option<&Path>, error: &str) -> Result<()> {
     tx.execute(
         "INSERT INTO scan_errors(scan_id, path, error) VALUES (?1, ?2, ?3)",
         params![scan_id, path.map(|p| p.to_string_lossy().to_string()), error],
@@ -375,81 +346,41 @@ fn allocated_size(metadata: &fs::Metadata) -> u64 {
 }
 
 #[cfg(unix)]
-fn metadata_mtime(metadata: &fs::Metadata) -> Option<i64> {
-    Some(metadata.mtime())
-}
-
+fn metadata_mtime(metadata: &fs::Metadata) -> Option<i64> { Some(metadata.mtime()) }
 #[cfg(not(unix))]
-fn metadata_mtime(metadata: &fs::Metadata) -> Option<i64> {
-    metadata.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs() as i64)
-}
+fn metadata_mtime(metadata: &fs::Metadata) -> Option<i64> { metadata.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs() as i64) }
 
 #[cfg(unix)]
-fn metadata_atime(metadata: &fs::Metadata) -> Option<i64> {
-    Some(metadata.atime())
-}
-
+fn metadata_atime(metadata: &fs::Metadata) -> Option<i64> { Some(metadata.atime()) }
 #[cfg(not(unix))]
-fn metadata_atime(_metadata: &fs::Metadata) -> Option<i64> {
-    None
-}
+fn metadata_atime(_metadata: &fs::Metadata) -> Option<i64> { None }
 
 #[cfg(unix)]
-fn metadata_ctime(metadata: &fs::Metadata) -> Option<i64> {
-    Some(metadata.ctime())
-}
-
+fn metadata_ctime(metadata: &fs::Metadata) -> Option<i64> { Some(metadata.ctime()) }
 #[cfg(not(unix))]
-fn metadata_ctime(_metadata: &fs::Metadata) -> Option<i64> {
-    None
-}
+fn metadata_ctime(_metadata: &fs::Metadata) -> Option<i64> { None }
 
 #[cfg(unix)]
-fn metadata_uid(metadata: &fs::Metadata) -> Option<u32> {
-    Some(metadata.uid())
-}
-
+fn metadata_uid(metadata: &fs::Metadata) -> Option<u32> { Some(metadata.uid()) }
 #[cfg(not(unix))]
-fn metadata_uid(_metadata: &fs::Metadata) -> Option<u32> {
-    None
-}
+fn metadata_uid(_metadata: &fs::Metadata) -> Option<u32> { None }
 
 #[cfg(unix)]
-fn metadata_gid(metadata: &fs::Metadata) -> Option<u32> {
-    Some(metadata.gid())
-}
-
+fn metadata_gid(metadata: &fs::Metadata) -> Option<u32> { Some(metadata.gid()) }
 #[cfg(not(unix))]
-fn metadata_gid(_metadata: &fs::Metadata) -> Option<u32> {
-    None
-}
+fn metadata_gid(_metadata: &fs::Metadata) -> Option<u32> { None }
 
 #[cfg(unix)]
-fn metadata_mode(metadata: &fs::Metadata) -> Option<u32> {
-    Some(metadata.mode())
-}
-
+fn metadata_mode(metadata: &fs::Metadata) -> Option<u32> { Some(metadata.mode()) }
 #[cfg(not(unix))]
-fn metadata_mode(_metadata: &fs::Metadata) -> Option<u32> {
-    None
-}
+fn metadata_mode(_metadata: &fs::Metadata) -> Option<u32> { None }
 
 #[cfg(unix)]
-fn metadata_dev(metadata: &fs::Metadata) -> Option<u64> {
-    Some(metadata.dev())
-}
-
+fn metadata_dev(metadata: &fs::Metadata) -> Option<u64> { Some(metadata.dev()) }
 #[cfg(not(unix))]
-fn metadata_dev(_metadata: &fs::Metadata) -> Option<u64> {
-    None
-}
+fn metadata_dev(_metadata: &fs::Metadata) -> Option<u64> { None }
 
 #[cfg(unix)]
-fn metadata_inode(metadata: &fs::Metadata) -> Option<u64> {
-    Some(metadata.ino())
-}
-
+fn metadata_inode(metadata: &fs::Metadata) -> Option<u64> { Some(metadata.ino()) }
 #[cfg(not(unix))]
-fn metadata_inode(_metadata: &fs::Metadata) -> Option<u64> {
-    None
-}
+fn metadata_inode(_metadata: &fs::Metadata) -> Option<u64> { None }

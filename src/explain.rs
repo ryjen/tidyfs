@@ -1,6 +1,6 @@
 use crate::db::Database;
 use crate::util;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use rusqlite::params;
 use std::path::PathBuf;
 
@@ -13,7 +13,6 @@ pub struct ExplainQuery {
 
 #[derive(Debug)]
 struct EntrySummary {
-    path: PathBuf,
     entry_type: String,
     size_bytes: u64,
     allocated_size_bytes: u64,
@@ -134,7 +133,7 @@ fn resolve_indexed_path(database: &Database, scan_id: i64, requested: &PathBuf) 
 fn load_entry(database: &Database, scan_id: i64, path: &PathBuf) -> Result<Option<EntrySummary>> {
     let mut stmt = database.connection().prepare(
         r#"
-        SELECT path, entry_type, size_bytes, allocated_size_bytes
+        SELECT entry_type, size_bytes, allocated_size_bytes
         FROM entries
         WHERE scan_id = ?1 AND path = ?2
         LIMIT 1
@@ -143,10 +142,9 @@ fn load_entry(database: &Database, scan_id: i64, path: &PathBuf) -> Result<Optio
 
     let result = stmt.query_row(params![scan_id, path.to_string_lossy().to_string()], |row| {
         Ok(EntrySummary {
-            path: PathBuf::from(row.get::<_, String>(0)?),
-            entry_type: row.get(1)?,
-            size_bytes: row.get::<_, i64>(2)? as u64,
-            allocated_size_bytes: row.get::<_, i64>(3)? as u64,
+            entry_type: row.get(0)?,
+            size_bytes: row.get::<_, i64>(1)? as u64,
+            allocated_size_bytes: row.get::<_, i64>(2)? as u64,
         })
     });
 

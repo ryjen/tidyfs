@@ -2,14 +2,15 @@
 
 `tidyfs` is a conservative disk-usage intelligence CLI.
 
-Milestone 2 implements:
+Milestone 3 implements the first cleanup-planning layer:
 
 ```bash
 tidyfs scan ~
-tidyfs top
-tidyfs classify
+tidyfs top --depth 2
+tidyfs classify --summary
 tidyfs explain ~/.cache
-tidyfs explain ~/src/project/node_modules
+tidyfs plan --safe
+tidyfs plan --risk medium
 ```
 
 The project goal is to build toward a safe cleanup planner, not an autonomous file deleter.
@@ -24,19 +25,20 @@ Implemented:
 - directory aggregation
 - deterministic classification
 - `explain` command
-- latest-scan lookup
-- permission-error tolerance
+- YAML cleanup rules
+- policy validation
+- cleanup candidate persistence
+- `plan` command
+- blocked-candidate reporting
 - no deletion
 - no AI
 - no adapters
 
 Not implemented yet:
 
-- cleanup rules
-- cleanup candidates
-- dry-run cleanup
+- dry-run cleaner command
 - quarantine/restore
-- adapters
+- adapter execution
 - AI explanations
 
 ## Install / run
@@ -44,8 +46,10 @@ Not implemented yet:
 ```bash
 cargo run -- scan ~
 cargo run -- top --depth 2 --limit 20
-cargo run -- explain ~/.cache
 cargo run -- classify --summary
+cargo run -- explain ~/.cache --children
+cargo run -- plan --safe
+cargo run -- plan --risk medium
 ```
 
 By default, the SQLite DB is stored at:
@@ -58,12 +62,12 @@ Override with:
 
 ```bash
 tidyfs --db ./tidyfs.db scan ~
-tidyfs --db ./tidyfs.db explain ~/.cache
+tidyfs --db ./tidyfs.db plan --safe
 ```
 
 ## Safety posture
 
-Milestone 2 is read-only. It only scans metadata, classifies known path patterns, and writes to its own SQLite DB.
+Milestone 3 is still read-only. It creates cleanup candidates and blocked findings, but does not execute anything.
 
 It does not:
 
@@ -74,7 +78,16 @@ It does not:
 - call AI providers
 - inspect file contents
 
-## Classification model
+## Planning model
+
+```text
+scan facts
+-> deterministic classifications
+-> YAML cleanup rules
+-> policy validation
+-> cleanup candidates / blocked candidates
+-> report
+```
 
 Classification answers:
 
@@ -82,39 +95,42 @@ Classification answers:
 What does this path appear to be?
 ```
 
-It does not answer:
+Planning answers:
 
 ```text
-Should this be deleted?
+Could this be proposed for cleanup under the selected risk threshold?
 ```
 
-Initial labels include:
+Execution is intentionally deferred to a later milestone.
 
-- `cache`
-- `thumbnail_cache`
-- `browser_cache`
-- `browser_profile`
-- `trash`
-- `node_cache`
-- `node_dependencies`
-- `node_build_artifacts`
-- `python_cache`
-- `python_virtualenv`
-- `python_bytecode_cache`
-- `rust_cache`
-- `rust_build_artifacts`
-- `go_cache`
-- `gradle_cache`
-- `maven_cache`
-- `docker_data`
-- `podman_data`
-- `nix_store`
-- `systemd_journal`
-- `source_repo`
-- `git_repo`
-- `database`
-- `vm_image`
-- `secret_material`
-- `unknown`
+## Risk tiers
 
-Protected/sensitive labels like `secret_material`, `database`, `vm_image`, `browser_profile`, and `git_repo` are intended to be blocked by later policy/planning milestones.
+| Risk | Meaning | Default behavior |
+|---|---|---|
+| low | known regenerable cache/temp data | shown by `plan --safe` |
+| medium | regenerable but project/tool-impacting | requires `--risk medium` |
+| high | risky user/application data | blocked/report-only |
+| forbidden | secrets, DBs, VMs, git metadata, browser profiles | blocked |
+
+## Example
+
+```bash
+tidyfs plan --safe
+```
+
+Output shape:
+
+```text
+Allowed cleanup candidates:
+  3.2 GiB  ~/.cache/pip
+           Rule: python-pip-cache-old
+           Risk: low
+           Action: report_only
+           Reason: Python package cache is normally regenerable.
+
+Blocked / report-only:
+  8.0 GiB  ~/src/foo/node_modules
+           Rule: node-modules-inactive-project
+           Risk: medium
+           Blocked: risk medium exceeds threshold low
+```

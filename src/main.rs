@@ -1,12 +1,14 @@
 mod classify;
 mod db;
 mod explain;
+mod plan;
+mod rules;
 mod scan;
 mod top;
 mod util;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -80,6 +82,52 @@ enum Command {
         #[arg(long)]
         children: bool,
     },
+
+    /// Build a read-only cleanup plan from rules and policy.
+    Plan {
+        /// Scan id to inspect. Defaults to latest completed scan.
+        #[arg(long)]
+        scan_id: Option<i64>,
+
+        /// Equivalent to --risk low.
+        #[arg(long)]
+        safe: bool,
+
+        /// Maximum allowed risk for candidates.
+        #[arg(long, value_enum, default_value_t = CliRisk::Low)]
+        risk: CliRisk,
+
+        /// Restrict output to a subtree.
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// Include blocked/report-only findings.
+        #[arg(long, default_value_t = true)]
+        include_blocked: bool,
+
+        /// Limit printed allowed candidates.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliRisk {
+    Low,
+    Medium,
+    High,
+    Forbidden,
+}
+
+impl From<CliRisk> for rules::Risk {
+    fn from(value: CliRisk) -> Self {
+        match value {
+            CliRisk::Low => rules::Risk::Low,
+            CliRisk::Medium => rules::Risk::Medium,
+            CliRisk::High => rules::Risk::High,
+            CliRisk::Forbidden => rules::Risk::Forbidden,
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -147,6 +195,24 @@ fn main() -> Result<()> {
                 children,
             };
             explain::print_explanation(&database, query)?;
+        }
+        Command::Plan {
+            scan_id,
+            safe,
+            risk,
+            root,
+            include_blocked,
+            limit,
+        } => {
+            let max_risk = if safe { rules::Risk::Low } else { risk.into() };
+            let query = plan::PlanQuery {
+                scan_id,
+                max_risk,
+                root,
+                include_blocked,
+                limit,
+            };
+            plan::run_plan(&mut database, query)?;
         }
     }
 

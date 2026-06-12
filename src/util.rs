@@ -67,7 +67,7 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 
     if unit == 0 {
-        format!("{} {}", bytes, UNITS[unit])
+        format!("{} B", bytes)
     } else {
         format!("{value:.1} {}", UNITS[unit])
     }
