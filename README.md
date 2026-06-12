@@ -2,7 +2,7 @@
 
 `tidyfs` is a conservative disk-usage intelligence CLI.
 
-Milestone 3 implements the first cleanup-planning layer:
+Milestone 4 implements a read-only cleanup preview:
 
 ```bash
 tidyfs scan ~
@@ -10,7 +10,7 @@ tidyfs top --depth 2
 tidyfs classify --summary
 tidyfs explain ~/.cache
 tidyfs plan --safe
-tidyfs plan --risk medium
+tidyfs clean --dry-run
 ```
 
 The project goal is to build toward a safe cleanup planner, not an autonomous file deleter.
@@ -30,13 +30,14 @@ Implemented:
 - cleanup candidate persistence
 - `plan` command
 - blocked-candidate reporting
-- no deletion
+- `clean --dry-run`
+- no filesystem mutation
 - no AI
 - no adapters
 
 Not implemented yet:
 
-- dry-run cleaner command
+- actual cleanup
 - quarantine/restore
 - adapter execution
 - AI explanations
@@ -49,7 +50,7 @@ cargo run -- top --depth 2 --limit 20
 cargo run -- classify --summary
 cargo run -- explain ~/.cache --children
 cargo run -- plan --safe
-cargo run -- plan --risk medium
+cargo run -- clean --dry-run
 ```
 
 By default, the SQLite DB is stored at:
@@ -63,11 +64,12 @@ Override with:
 ```bash
 tidyfs --db ./tidyfs.db scan ~
 tidyfs --db ./tidyfs.db plan --safe
+tidyfs --db ./tidyfs.db clean --dry-run
 ```
 
 ## Safety posture
 
-Milestone 3 is still read-only. It creates cleanup candidates and blocked findings, but does not execute anything.
+Milestone 4 is still read-only. It creates cleanup candidates and previews actions, but does not execute anything.
 
 It does not:
 
@@ -87,6 +89,7 @@ scan facts
 -> policy validation
 -> cleanup candidates / blocked candidates
 -> report
+-> dry-run preview
 ```
 
 Classification answers:
@@ -101,7 +104,11 @@ Planning answers:
 Could this be proposed for cleanup under the selected risk threshold?
 ```
 
-Execution is intentionally deferred to a later milestone.
+Dry-run answers:
+
+```text
+What exact actions would be attempted later?
+```
 
 ## Risk tiers
 
@@ -116,21 +123,20 @@ Execution is intentionally deferred to a later milestone.
 
 ```bash
 tidyfs plan --safe
+tidyfs clean --dry-run
 ```
 
 Output shape:
 
 ```text
-Allowed cleanup candidates:
+Dry-run cleanup preview
+
+Would process:
   3.2 GiB  ~/.cache/pip
+           Candidate: 42
            Rule: python-pip-cache-old
            Risk: low
            Action: report_only
+           Reversible: yes
            Reason: Python package cache is normally regenerable.
-
-Blocked / report-only:
-  8.0 GiB  ~/src/foo/node_modules
-           Rule: node-modules-inactive-project
-           Risk: medium
-           Blocked: risk medium exceeds threshold low
 ```

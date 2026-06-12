@@ -1,4 +1,5 @@
 mod classify;
+mod clean;
 mod db;
 mod explain;
 mod plan;
@@ -109,6 +110,33 @@ enum Command {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
+
+    /// Preview allowed cleanup candidates without touching the filesystem.
+    Clean {
+        /// Scan id to inspect. Defaults to latest completed scan.
+        #[arg(long)]
+        scan_id: Option<i64>,
+
+        /// Required in Milestone 4. No filesystem changes are made.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Equivalent to --risk low.
+        #[arg(long)]
+        safe: bool,
+
+        /// Maximum allowed risk for dry-run preview.
+        #[arg(long, value_enum, default_value_t = CliRisk::Low)]
+        risk: CliRisk,
+
+        /// Restrict output to a subtree.
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// Limit printed candidates.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -213,6 +241,24 @@ fn main() -> Result<()> {
                 limit,
             };
             plan::run_plan(&mut database, query)?;
+        }
+        Command::Clean {
+            scan_id,
+            dry_run,
+            safe,
+            risk,
+            root,
+            limit,
+        } => {
+            let max_risk = if safe { rules::Risk::Low } else { risk.into() };
+            let query = clean::CleanQuery {
+                scan_id,
+                dry_run,
+                max_risk,
+                root,
+                limit,
+            };
+            clean::run_clean(&database, query)?;
         }
     }
 
