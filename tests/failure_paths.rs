@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -98,7 +98,7 @@ fn prepare_candidate(sandbox: &Sandbox) -> PathBuf {
     candidate
 }
 
-fn quarantine_candidate(sandbox: &Sandbox, candidate: &PathBuf) -> (i64, PathBuf) {
+fn quarantine_candidate(sandbox: &Sandbox, candidate: &Path) -> (i64, PathBuf) {
     let candidate_arg = candidate.to_str().expect("UTF-8 temporary path");
     assert_success(&sandbox.run_with_input(
         &[
