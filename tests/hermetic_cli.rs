@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -159,9 +159,4 @@ fn scan_records_symlink_without_following_external_target() {
         )
         .expect("query external target");
     assert_eq!(external_count, 0, "symlink target was followed");
-}
-
-#[allow(dead_code)]
-fn _assert_path_exists(path: &Path) {
-    assert!(path.exists(), "expected path to exist: {}", path.display());
 }
