@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -22,8 +22,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -32,36 +30,6 @@ jobs:
 
       - name: Cache Cargo data
         uses: Swatinem/rust-cache@v2
-
-      - name: Apply remaining baseline fixes
-        if: github.event_name == 'pull_request'
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          plan = Path('src/plan.rs')
-          text = plan.read_text()
-          text = text.replace('use std::path::PathBuf;', 'use std::path::{Path, PathBuf};')
-          text = text.replace('    scan_root: &PathBuf,', '    scan_root: &Path,')
-          plan.write_text(text)
-
-          top = Path('src/top.rs')
-          text = top.read_text()
-          text = text.replace(
-              'filtered.sort_by(|a, b| b.allocated_size.cmp(&a.allocated_size));',
-              'filtered.sort_by_key(|entry| std::cmp::Reverse(entry.allocated_size));',
-          )
-          top.write_text(text)
-          PY
-          cargo fmt --all
-          cargo clippy --all-targets --all-features -- -D warnings
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src
-            git commit -m "fix: resolve remaining Clippy baseline findings"
-            git push origin HEAD:${{ github.head_ref }}
-          fi
 
       - name: Check formatting
         run: cargo fmt --all -- --check
