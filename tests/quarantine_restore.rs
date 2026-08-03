@@ -128,13 +128,14 @@ fn quarantine_then_restore_preserves_payload_and_action_state() {
         fs::read(&quarantine_path).expect("read quarantine payload"),
         payload
     );
-    assert!(
-        quarantine_path.starts_with(sandbox.home.join(".local/share/tidyfs/quarantine"))
-    );
+    assert!(quarantine_path.starts_with(sandbox.home.join(".local/share/tidyfs/quarantine")));
 
     assert_success(&sandbox.run(&["restore", "--action", &action_id.to_string()]));
 
-    assert_eq!(fs::read(&candidate).expect("read restored payload"), payload);
+    assert_eq!(
+        fs::read(&candidate).expect("read restored payload"),
+        payload
+    );
     assert!(
         !quarantine_path.exists(),
         "quarantine payload remained after restore"
