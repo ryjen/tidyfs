@@ -159,6 +159,10 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_actions_status
               ON actions(status);
+
+            UPDATE actions
+            SET status = 'moving'
+            WHERE status = 'running';
             "#,
         )?;
 

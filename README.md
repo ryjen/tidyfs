@@ -32,6 +32,8 @@ Implemented:
 - blocked-candidate reporting
 - `clean --dry-run`
 - reversible quarantine execution
+- durable cleanup and restore action states
+- interrupted action reconciliation with `recover`
 - action logging
 - `actions` listing
 - `restore`
@@ -71,6 +73,7 @@ cargo run -- plan --safe
 cargo run -- clean --dry-run
 cargo run -- clean --safe --interactive
 cargo run -- actions
+cargo run -- recover --all
 cargo run -- restore --latest
 cargo run -- adapters
 cargo run -- plan --risk medium --include-adapters
@@ -107,6 +110,14 @@ Real quarantine execution requires both:
 --safe --interactive
 ```
 
+Cleanup and restore persist transitional action states before filesystem mutation. After an interrupted operation, reconcile the database against the two recorded paths with:
+
+```bash
+tidyfs recover --all
+```
+
+Recovery does not move, delete, or overwrite filesystem entries. See [Recoverable actions](docs/recovery.md) for the state machine, reconciliation matrix, threat model, current limitations, and operator procedure.
+
 Adapter candidates use:
 
 ```text
@@ -126,10 +137,9 @@ scan facts
 -> cleanup candidates / blocked candidates
 -> dry-run preview
 -> interactive quarantine execution for reversible file candidates only
--> action log
--> restore
+-> durable action state
+-> recover or restore
 ```
-
 
 ## Parallel scanning
 

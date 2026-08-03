@@ -215,37 +215,52 @@ fn quarantine_candidate(
 ) -> Result<i64> {
     preflight_candidate(scan, candidate)?;
 
-    let action_id = insert_action(database, scan.id, candidate, "running", None, None)?;
+    let action_id = insert_action(database, scan.id, candidate)?;
     let action_dir = quarantine_root.join(format!("action-{action_id}"));
     let payload_path = action_dir.join("payload");
     let manifest_path = action_dir.join("manifest.txt");
 
-    fs::create_dir_all(&action_dir)
-        .with_context(|| format!("creating action quarantine dir {}", action_dir.display()))?;
+    set_action_intent(database, action_id, &payload_path)?;
 
-    let manifest = format!(
-        "action_id={}\nscan_id={}\ncandidate_id={}\noriginal_path={}\nquarantine_path={}\nrule_id={}\nrisk={}\nsize_bytes={}\n",
-        action_id,
-        scan.id,
-        candidate.id,
-        candidate.path.display(),
-        payload_path.display(),
-        candidate.rule_id,
-        candidate.risk,
-        candidate.size_bytes,
-    );
-    fs::write(&manifest_path, manifest)
-        .with_context(|| format!("writing manifest {}", manifest_path.display()))?;
+    let prepare_result = (|| -> Result<()> {
+        fs::create_dir_all(&action_dir)
+            .with_context(|| format!("creating action quarantine dir {}", action_dir.display()))?;
 
-    fs::rename(&candidate.path, &payload_path).with_context(|| {
+        let manifest = format!(
+            "action_id={}\nscan_id={}\ncandidate_id={}\noriginal_path={}\nquarantine_path={}\nrule_id={}\nrisk={}\nsize_bytes={}\n",
+            action_id,
+            scan.id,
+            candidate.id,
+            candidate.path.display(),
+            payload_path.display(),
+            candidate.rule_id,
+            candidate.risk,
+            candidate.size_bytes,
+        );
+        fs::write(&manifest_path, manifest)
+            .with_context(|| format!("writing manifest {}", manifest_path.display()))?;
+        Ok(())
+    })();
+
+    if let Err(err) = prepare_result {
+        record_action_failure(database, action_id, &err);
+        return Err(err);
+    }
+
+    set_action_status(database, action_id, "moving", None)?;
+
+    if let Err(err) = fs::rename(&candidate.path, &payload_path).with_context(|| {
         format!(
             "moving {} to {}",
             candidate.path.display(),
             payload_path.display()
         )
-    })?;
+    }) {
+        record_action_failure(database, action_id, &err);
+        return Err(err);
+    }
 
-    update_action_success(database, action_id, &payload_path)?;
+    set_action_status(database, action_id, "quarantined", None)?;
     Ok(action_id)
 }
 
@@ -276,55 +291,64 @@ fn preflight_candidate(scan: &ScanInfo, candidate: &Candidate) -> Result<()> {
     Ok(())
 }
 
-fn insert_action(
-    database: &Database,
-    scan_id: i64,
-    candidate: &Candidate,
-    status: &str,
-    quarantine_path: Option<&Path>,
-    error: Option<&str>,
-) -> Result<i64> {
+fn insert_action(database: &Database, scan_id: i64, candidate: &Candidate) -> Result<i64> {
     database.connection().execute(
         r#"
         INSERT INTO actions(
           timestamp, scan_id, candidate_id, original_path, quarantine_path,
           action_type, size_bytes, rule_id, risk, status, error
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, 'planned', NULL)
         "#,
         params![
             util::unix_now(),
             scan_id,
             candidate.id,
             candidate.path.to_string_lossy(),
-            quarantine_path.map(|p| p.to_string_lossy().to_string()),
             candidate.action_type,
             candidate.size_bytes as i64,
             candidate.rule_id,
             candidate.risk.to_string(),
-            status,
-            error,
         ],
     )?;
 
     Ok(database.connection().last_insert_rowid())
 }
 
-fn update_action_success(
-    database: &Database,
-    action_id: i64,
-    quarantine_path: &Path,
-) -> Result<()> {
+fn set_action_intent(database: &Database, action_id: i64, quarantine_path: &Path) -> Result<()> {
     database.connection().execute(
         r#"
         UPDATE actions
-        SET status = 'quarantined',
-            quarantine_path = ?1
+        SET quarantine_path = ?1
         WHERE id = ?2
+          AND status = 'planned'
         "#,
         params![quarantine_path.to_string_lossy(), action_id],
     )?;
     Ok(())
+}
+
+fn set_action_status(
+    database: &Database,
+    action_id: i64,
+    status: &str,
+    error: Option<&str>,
+) -> Result<()> {
+    database.connection().execute(
+        r#"
+        UPDATE actions
+        SET status = ?1,
+            error = ?2
+        WHERE id = ?3
+        "#,
+        params![status, error, action_id],
+    )?;
+    Ok(())
+}
+
+fn record_action_failure(database: &Database, action_id: i64, error: &anyhow::Error) {
+    let message = format!("{error:#}");
+    let _ = set_action_status(database, action_id, "failed", Some(&message));
 }
 
 fn confirm(prompt: &str) -> Result<bool> {
