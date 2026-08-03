@@ -65,13 +65,15 @@ pub fn run_restore(database: &Database, query: RestoreQuery) -> Result<()> {
         }
     }
 
-    if let Err(err) = fs::rename(&action.quarantine_path, &action.original_path).with_context(|| {
-        format!(
-            "moving {} back to {}",
-            action.quarantine_path.display(),
-            action.original_path.display()
-        )
-    }) {
+    if let Err(err) =
+        fs::rename(&action.quarantine_path, &action.original_path).with_context(|| {
+            format!(
+                "moving {} back to {}",
+                action.quarantine_path.display(),
+                action.original_path.display()
+            )
+        })
+    {
         record_restore_failure(database, action.id, &err);
         return Err(err);
     }
