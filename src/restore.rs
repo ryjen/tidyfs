@@ -54,24 +54,35 @@ pub fn run_restore(database: &Database, query: RestoreQuery) -> Result<()> {
         );
     }
 
+    set_restore_status(database, action.id, "restoring", None)?;
+
     if let Some(parent) = action.original_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("creating restore parent {}", parent.display()))?;
+        if let Err(err) = fs::create_dir_all(parent)
+            .with_context(|| format!("creating restore parent {}", parent.display()))
+        {
+            record_restore_failure(database, action.id, &err);
+            return Err(err);
+        }
     }
 
-    fs::rename(&action.quarantine_path, &action.original_path).with_context(|| {
+    if let Err(err) = fs::rename(&action.quarantine_path, &action.original_path).with_context(|| {
         format!(
             "moving {} back to {}",
             action.quarantine_path.display(),
             action.original_path.display()
         )
-    })?;
+    }) {
+        record_restore_failure(database, action.id, &err);
+        return Err(err);
+    }
 
     database.connection().execute(
         r#"
         UPDATE actions
         SET status = 'restored',
-            restored_at = ?1
+            restored_at = ?1,
+            error = NULL,
+            restore_error = NULL
         WHERE id = ?2
         "#,
         params![util::unix_now(), action.id],
@@ -81,6 +92,29 @@ pub fn run_restore(database: &Database, query: RestoreQuery) -> Result<()> {
     println!("path: {}", action.original_path.display());
 
     Ok(())
+}
+
+fn set_restore_status(
+    database: &Database,
+    action_id: i64,
+    status: &str,
+    restore_error: Option<&str>,
+) -> Result<()> {
+    database.connection().execute(
+        r#"
+        UPDATE actions
+        SET status = ?1,
+            restore_error = ?2
+        WHERE id = ?3
+        "#,
+        params![status, restore_error, action_id],
+    )?;
+    Ok(())
+}
+
+fn record_restore_failure(database: &Database, action_id: i64, error: &anyhow::Error) {
+    let message = format!("{error:#}");
+    let _ = set_restore_status(database, action_id, "quarantined", Some(&message));
 }
 
 fn load_latest_action(database: &Database) -> Result<RestoreAction> {
