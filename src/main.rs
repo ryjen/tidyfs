@@ -5,6 +5,7 @@ mod clean;
 mod db;
 mod explain;
 mod plan;
+mod recover;
 mod restore;
 mod rules;
 mod scan;
@@ -163,6 +164,17 @@ enum Command {
         limit: usize,
     },
 
+    /// Reconcile interrupted cleanup or restore actions without moving files.
+    Recover {
+        /// Recover a specific interrupted action id.
+        #[arg(long)]
+        action: Option<i64>,
+
+        /// Recover all interrupted actions.
+        #[arg(long)]
+        all: bool,
+    },
+
     /// Restore a quarantined action.
     Restore {
         /// Restore a specific action id.
@@ -308,6 +320,15 @@ fn main() -> Result<()> {
         }
         Command::Actions { limit } => {
             actions::print_actions(&database, actions::ActionsQuery { limit })?;
+        }
+        Command::Recover { action, all } => {
+            recover::run_recover(
+                &database,
+                recover::RecoverQuery {
+                    action_id: action,
+                    all,
+                },
+            )?;
         }
         Command::Restore { action, latest } => {
             restore::run_restore(
