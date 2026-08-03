@@ -2,7 +2,7 @@ use crate::db::Database;
 use crate::util;
 use anyhow::{Context, Result};
 use rusqlite::params;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct ExplainQuery {
@@ -104,7 +104,7 @@ pub fn print_explanation(database: &Database, query: ExplainQuery) -> Result<()>
     Ok(())
 }
 
-fn resolve_indexed_path(database: &Database, scan_id: i64, requested: &PathBuf) -> Result<PathBuf> {
+fn resolve_indexed_path(database: &Database, scan_id: i64, requested: &Path) -> Result<PathBuf> {
     let requested_str = requested.to_string_lossy().to_string();
 
     let mut stmt = database.connection().prepare(
@@ -142,7 +142,7 @@ fn resolve_indexed_path(database: &Database, scan_id: i64, requested: &PathBuf) 
     }
 }
 
-fn load_entry(database: &Database, scan_id: i64, path: &PathBuf) -> Result<Option<EntrySummary>> {
+fn load_entry(database: &Database, scan_id: i64, path: &Path) -> Result<Option<EntrySummary>> {
     let mut stmt = database.connection().prepare(
         r#"
         SELECT entry_type, size_bytes, allocated_size_bytes
@@ -173,7 +173,7 @@ fn load_entry(database: &Database, scan_id: i64, path: &PathBuf) -> Result<Optio
 fn load_directory_summary(
     database: &Database,
     scan_id: i64,
-    path: &PathBuf,
+    path: &Path,
 ) -> Result<Option<DirSummary>> {
     let mut stmt = database.connection().prepare(
         r#"
@@ -207,7 +207,7 @@ fn load_directory_summary(
 fn load_classifications(
     database: &Database,
     scan_id: i64,
-    path: &PathBuf,
+    path: &Path,
 ) -> Result<Vec<ClassificationRow>> {
     let mut stmt = database.connection().prepare(
         r#"
@@ -235,7 +235,7 @@ fn load_classifications(
     Ok(rows)
 }
 
-fn print_child_summary(database: &Database, scan_id: i64, path: &PathBuf) -> Result<()> {
+fn print_child_summary(database: &Database, scan_id: i64, path: &Path) -> Result<()> {
     let path_str = path.to_string_lossy().to_string();
 
     let mut stmt = database.connection().prepare(
