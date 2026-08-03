@@ -16,10 +16,8 @@ impl Sandbox {
             .duration_since(UNIX_EPOCH)
             .expect("system clock before Unix epoch")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "tidyfs-{name}-{}-{nonce}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tidyfs-{name}-{}-{nonce}", std::process::id()));
         let scan_root = root.join("scan-root");
         let db_path = root.join("state/tidyfs.db");
         fs::create_dir_all(&scan_root).expect("create isolated scan root");
@@ -65,8 +63,11 @@ fn scan_indexes_only_the_isolated_tree_and_database() {
     let sandbox = Sandbox::new("scan");
     let project = sandbox.scan_root.join("project");
     fs::create_dir_all(project.join("target/debug")).expect("create fixture tree");
-    fs::write(project.join("Cargo.toml"), "[package]\nname='fixture'\nversion='0.1.0'\n")
-        .expect("write Cargo manifest");
+    fs::write(
+        project.join("Cargo.toml"),
+        "[package]\nname='fixture'\nversion='0.1.0'\n",
+    )
+    .expect("write Cargo manifest");
     fs::write(project.join("target/debug/artifact"), vec![b'x'; 4096])
         .expect("write fixture artifact");
 
@@ -110,14 +111,14 @@ fn dry_run_preserves_filesystem_and_records_no_actions() {
     fs::write(&bytecode, b"generated-bytecode").expect("write fixture file");
     let before = fs::read(&bytecode).expect("read fixture before dry-run");
 
-    assert_success(&sandbox.run(&[
-        "scan",
-        sandbox.scan_root.to_str().expect("UTF-8 temp path"),
-    ]));
+    assert_success(&sandbox.run(&["scan", sandbox.scan_root.to_str().expect("UTF-8 temp path")]));
     assert_success(&sandbox.run(&["plan", "--safe"]));
     assert_success(&sandbox.run(&["clean", "--dry-run", "--safe"]));
 
-    assert_eq!(fs::read(&bytecode).expect("read fixture after dry-run"), before);
+    assert_eq!(
+        fs::read(&bytecode).expect("read fixture after dry-run"),
+        before
+    );
     let conn = sandbox.connection();
     let actions: i64 = conn
         .query_row("SELECT COUNT(*) FROM actions", [], |row| row.get(0))
@@ -136,10 +137,7 @@ fn scan_records_symlink_without_following_external_target() {
     let link = sandbox.scan_root.join("external-link");
     symlink(&external, &link).expect("create symlink fixture");
 
-    assert_success(&sandbox.run(&[
-        "scan",
-        sandbox.scan_root.to_str().expect("UTF-8 temp path"),
-    ]));
+    assert_success(&sandbox.run(&["scan", sandbox.scan_root.to_str().expect("UTF-8 temp path")]));
 
     let conn = sandbox.connection();
     let entry_type: String = conn
