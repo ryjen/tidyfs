@@ -151,10 +151,7 @@ fn recover_action(sandbox: &Sandbox, action_id: i64) -> Output {
 }
 
 fn assert_payload(path: &Path) {
-    assert_eq!(
-        fs::read(path).expect("read payload"),
-        b"generated-bytecode"
-    );
+    assert_eq!(fs::read(path).expect("read payload"), b"generated-bytecode");
 }
 
 #[test]
@@ -207,9 +204,7 @@ fn recover_moving_before_payload_move_marks_terminal_failure() {
     let (status, restored_at, error) = action_state(&sandbox, action_id);
     assert_eq!(status, "failed");
     assert!(restored_at.is_none());
-    assert!(
-        error
-            .expect("terminal recovery error")
-            .contains("move did not complete")
-    );
+    assert!(error
+        .expect("terminal recovery error")
+        .contains("move did not complete"));
 }
