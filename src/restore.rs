@@ -29,7 +29,11 @@ pub fn run_restore(database: &Database, query: RestoreQuery) -> Result<()> {
     };
 
     if action.status != "quarantined" {
-        bail!("action {} is not restorable; status={}", action.id, action.status);
+        bail!(
+            "action {} is not restorable; status={}",
+            action.id,
+            action.status
+        );
     }
 
     if action.restored_at.is_some() {

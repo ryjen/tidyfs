@@ -128,7 +128,11 @@ pub fn print_adapters() {
         println!(
             "  {:<16} {}",
             status.name,
-            if status.detected { "detected" } else { "missing" }
+            if status.detected {
+                "detected"
+            } else {
+                "missing"
+            }
         );
         println!("       preview: {}", status.preview_command.join(" "));
         println!("       cleanup: {}", status.cleanup_command.join(" "));
@@ -226,8 +230,16 @@ fn run_preview_summary(argv: &[&str]) -> String {
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let text = if !stderr.trim().is_empty() { stderr } else { stdout };
-            format!("preview exited with {}; {}", output.status, summarize_output(&text))
+            let text = if !stderr.trim().is_empty() {
+                stderr
+            } else {
+                stdout
+            };
+            format!(
+                "preview exited with {}; {}",
+                output.status,
+                summarize_output(&text)
+            )
         }
         Err(err) => format!("preview unavailable: {err}"),
     }

@@ -76,7 +76,13 @@ pub fn run_clean(database: &Database, query: CleanQuery) -> Result<()> {
         bail!("real cleanup requires --interactive");
     }
 
-    execute_interactive(database, &scan, query.max_risk, root_filter.as_ref(), &candidates)
+    execute_interactive(
+        database,
+        &scan,
+        query.max_risk,
+        root_filter.as_ref(),
+        &candidates,
+    )
 }
 
 fn print_dry_run(
@@ -180,7 +186,10 @@ fn execute_interactive(
         match quarantine_candidate(database, scan, candidate, &quarantine_root) {
             Ok(action_id) => {
                 success += 1;
-                println!("quarantined action_id={action_id}: {}", candidate.path.display());
+                println!(
+                    "quarantined action_id={action_id}: {}",
+                    candidate.path.display()
+                );
             }
             Err(err) => {
                 failed += 1;
@@ -301,7 +310,11 @@ fn insert_action(
     Ok(database.connection().last_insert_rowid())
 }
 
-fn update_action_success(database: &Database, action_id: i64, quarantine_path: &Path) -> Result<()> {
+fn update_action_success(
+    database: &Database,
+    action_id: i64,
+    quarantine_path: &Path,
+) -> Result<()> {
     database.connection().execute(
         r#"
         UPDATE actions

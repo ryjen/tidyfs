@@ -1,11 +1,11 @@
-mod classify;
-mod clean;
 mod actions;
 mod adapters;
-mod restore;
+mod classify;
+mod clean;
 mod db;
 mod explain;
 mod plan;
+mod restore;
 mod rules;
 mod scan;
 mod top;
