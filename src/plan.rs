@@ -4,7 +4,7 @@ use crate::rules::{self, Risk, Rule};
 use crate::util;
 use anyhow::Result;
 use rusqlite::params;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Debug)]

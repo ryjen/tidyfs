@@ -59,8 +59,8 @@ pub fn print_top(database: &Database, query: TopQuery) -> Result<()> {
     println!();
 
     println!(
-        "{:>12} {:>12} {:>8} {:>8} {:>8}  {}",
-        "ALLOCATED", "LOGICAL", "FILES", "DIRS", "LINKS", "PATH"
+        "{:>12} {:>12} {:>8} {:>8} {:>8}  PATH",
+        "ALLOCATED", "LOGICAL", "FILES", "DIRS", "LINKS"
     );
 
     for row in filtered {
