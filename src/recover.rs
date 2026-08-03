@@ -64,7 +64,11 @@ fn reconcile_action(database: &Database, action: &RecoveryAction) -> Result<&'st
     }
 
     let Some(quarantine_path) = action.quarantine_path.as_ref() else {
-        mark_failed(database, action.id, "interrupted action has no quarantine path")?;
+        mark_failed(
+            database,
+            action.id,
+            "interrupted action has no quarantine path",
+        )?;
         return Ok("failed");
     };
 
@@ -84,18 +88,10 @@ fn reconcile_action(database: &Database, action: &RecoveryAction) -> Result<&'st
     })?;
 
     match action.status.as_str() {
-        "planned" | "moving" => reconcile_quarantine(
-            database,
-            action,
-            original_exists,
-            quarantine_exists,
-        ),
-        "restoring" => reconcile_restore(
-            database,
-            action,
-            original_exists,
-            quarantine_exists,
-        ),
+        "planned" | "moving" => {
+            reconcile_quarantine(database, action, original_exists, quarantine_exists)
+        }
+        "restoring" => reconcile_restore(database, action, original_exists, quarantine_exists),
         _ => unreachable!(),
     }
 }
