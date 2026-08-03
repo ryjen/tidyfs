@@ -5,7 +5,7 @@ use crate::util;
 use anyhow::Result;
 use rusqlite::params;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct PlanQuery {
@@ -310,7 +310,7 @@ fn persist_candidates(
 
 fn print_plan(
     scan_id: i64,
-    scan_root: &PathBuf,
+    scan_root: &Path,
     max_risk: Risk,
     candidates: &[PlannedCandidate],
     include_blocked: bool,

@@ -48,7 +48,7 @@ pub fn print_top(database: &Database, query: TopQuery) -> Result<()> {
         })
         .collect();
 
-    filtered.sort_by(|a, b| b.allocated_size.cmp(&a.allocated_size));
+    filtered.sort_by_key(|entry| std::cmp::Reverse(entry.allocated_size));
     filtered.truncate(query.limit);
 
     println!("scan_id: {}", scan.id);
