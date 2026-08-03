@@ -166,9 +166,13 @@ fn restore_collision_preserves_destination_payload_and_action_state() {
 
     fs::write(&candidate, b"replacement-data").expect("create restore collision");
     let output = sandbox.run(&["restore", "--action", &action_id.to_string()]);
-    assert!(!output.status.success(), "restore unexpectedly overwrote destination");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("refusing to overwrite existing destination"),
+        !output.status.success(),
+        "restore unexpectedly overwrote destination"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("refusing to overwrite existing destination"),
         "restore collision error was not reported"
     );
     assert_eq!(
