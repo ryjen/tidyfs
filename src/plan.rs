@@ -1,11 +1,11 @@
 use crate::adapters;
 use crate::db::Database;
-use crate::rules::{self, Rule, Risk};
+use crate::rules::{self, Risk, Rule};
 use crate::util;
 use anyhow::Result;
 use rusqlite::params;
-use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct PlanQuery {
@@ -113,7 +113,14 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
 
     persist_candidates(database, scan.id, &candidates)?;
 
-    print_plan(scan.id, &scan.root_path, query.max_risk, &candidates, query.include_blocked, query.limit);
+    print_plan(
+        scan.id,
+        &scan.root_path,
+        query.max_risk,
+        &candidates,
+        query.include_blocked,
+        query.limit,
+    );
 
     Ok(())
 }
@@ -187,7 +194,11 @@ fn rule_matches(rule: &Rule, item: &ClassifiedPath) -> bool {
 
     if !m.path_contains_any.is_empty() {
         let path = item.path.to_string_lossy();
-        if !m.path_contains_any.iter().any(|needle| path.contains(needle)) {
+        if !m
+            .path_contains_any
+            .iter()
+            .any(|needle| path.contains(needle))
+        {
             return false;
         }
     }
@@ -221,11 +232,7 @@ fn validate_policy(rule: &Rule, item: &ClassifiedPath, max_risk: Risk) -> Option
     if item.labels.iter().any(|label| {
         matches!(
             label.as_str(),
-            "secret_material"
-                | "git_repo"
-                | "database"
-                | "vm_image"
-                | "browser_profile"
+            "secret_material" | "git_repo" | "database" | "vm_image" | "browser_profile"
         )
     }) {
         return Some("policy forbids cleanup of protected/sensitive path category".to_string());
@@ -237,7 +244,9 @@ fn validate_policy(rule: &Rule, item: &ClassifiedPath, max_risk: Risk) -> Option
             "docker_data" | "podman_data" | "nix_store" | "systemd_journal"
         )
     }) {
-        return Some("policy requires a future tool-native adapter; raw file cleanup is blocked".to_string());
+        return Some(
+            "policy requires a future tool-native adapter; raw file cleanup is blocked".to_string(),
+        );
     }
 
     if !rules::risk_allows(rule.risk, max_risk) {
@@ -254,7 +263,11 @@ fn validate_policy(rule: &Rule, item: &ClassifiedPath, max_risk: Risk) -> Option
     None
 }
 
-fn persist_candidates(database: &mut Database, scan_id: i64, candidates: &[PlannedCandidate]) -> Result<()> {
+fn persist_candidates(
+    database: &mut Database,
+    scan_id: i64,
+    candidates: &[PlannedCandidate],
+) -> Result<()> {
     let tx = database.transaction()?;
     tx.execute(
         "DELETE FROM cleanup_candidates WHERE scan_id = ?1",
@@ -297,7 +310,7 @@ fn persist_candidates(database: &mut Database, scan_id: i64, candidates: &[Plann
 
 fn print_plan(
     scan_id: i64,
-    scan_root: &PathBuf,
+    scan_root: &Path,
     max_risk: Risk,
     candidates: &[PlannedCandidate],
     include_blocked: bool,
@@ -311,7 +324,12 @@ fn print_plan(
     println!("scan_id: {scan_id}");
     println!("scan_root: {}", scan_root.display());
     println!("risk_threshold: {max_risk}");
-    println!("include_adapters: {}", candidates.iter().any(|c| c.path.to_string_lossy().starts_with("adapter://")));
+    println!(
+        "include_adapters: {}",
+        candidates
+            .iter()
+            .any(|c| c.path.to_string_lossy().starts_with("adapter://"))
+    );
     println!("allowed_candidates: {}", allowed.len());
     println!("allowed_reclaimable: {}", util::format_bytes(allowed_bytes));
     println!("blocked_or_report_only: {}", blocked.len());
@@ -325,7 +343,10 @@ fn print_plan(
             print_candidate(c);
         }
         if allowed.len() > limit {
-            println!("  ... {} more allowed candidates omitted", allowed.len() - limit);
+            println!(
+                "  ... {} more allowed candidates omitted",
+                allowed.len() - limit
+            );
         }
     }
 
@@ -342,7 +363,10 @@ fn print_plan(
                 }
             }
             if blocked.len() > limit {
-                println!("  ... {} more blocked candidates omitted", blocked.len() - limit);
+                println!(
+                    "  ... {} more blocked candidates omitted",
+                    blocked.len() - limit
+                );
             }
         }
     }

@@ -2,7 +2,7 @@ use crate::db::Database;
 use crate::util;
 use anyhow::{Context, Result};
 use rusqlite::params;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct ExplainQuery {
@@ -42,8 +42,13 @@ pub fn print_explanation(database: &Database, query: ExplainQuery) -> Result<()>
     };
 
     let requested = util::normalize_path_best_effort(&query.path);
-    let path = resolve_indexed_path(database, scan.id, &requested)
-        .with_context(|| format!("path not found in scan {}: {}", scan.id, requested.display()))?;
+    let path = resolve_indexed_path(database, scan.id, &requested).with_context(|| {
+        format!(
+            "path not found in scan {}: {}",
+            scan.id,
+            requested.display()
+        )
+    })?;
 
     println!("scan_id: {}", scan.id);
     println!("scan_root: {}", scan.root_path.display());
@@ -60,8 +65,14 @@ pub fn print_explanation(database: &Database, query: ExplainQuery) -> Result<()>
     }
 
     if let Some(dir) = load_directory_summary(database, scan.id, &path)? {
-        println!("directory_total: {}", util::format_bytes(dir.allocated_size_bytes));
-        println!("directory_logical_total: {}", util::format_bytes(dir.total_size_bytes));
+        println!(
+            "directory_total: {}",
+            util::format_bytes(dir.allocated_size_bytes)
+        );
+        println!(
+            "directory_logical_total: {}",
+            util::format_bytes(dir.total_size_bytes)
+        );
         println!("files: {}", dir.file_count);
         println!("dirs: {}", dir.dir_count);
         println!("symlinks: {}", dir.symlink_count);
@@ -93,7 +104,7 @@ pub fn print_explanation(database: &Database, query: ExplainQuery) -> Result<()>
     Ok(())
 }
 
-fn resolve_indexed_path(database: &Database, scan_id: i64, requested: &PathBuf) -> Result<PathBuf> {
+fn resolve_indexed_path(database: &Database, scan_id: i64, requested: &Path) -> Result<PathBuf> {
     let requested_str = requested.to_string_lossy().to_string();
 
     let mut stmt = database.connection().prepare(
@@ -121,16 +132,17 @@ fn resolve_indexed_path(database: &Database, scan_id: i64, requested: &PathBuf) 
                 "#,
             )?;
 
-            stmt.query_row(params![scan_id, requested.to_string_lossy().to_string()], |row| {
-                Ok(PathBuf::from(row.get::<_, String>(0)?))
-            })
+            stmt.query_row(
+                params![scan_id, requested.to_string_lossy().to_string()],
+                |row| Ok(PathBuf::from(row.get::<_, String>(0)?)),
+            )
             .map_err(anyhow::Error::from)
         }
         Err(err) => Err(err.into()),
     }
 }
 
-fn load_entry(database: &Database, scan_id: i64, path: &PathBuf) -> Result<Option<EntrySummary>> {
+fn load_entry(database: &Database, scan_id: i64, path: &Path) -> Result<Option<EntrySummary>> {
     let mut stmt = database.connection().prepare(
         r#"
         SELECT entry_type, size_bytes, allocated_size_bytes
@@ -140,13 +152,16 @@ fn load_entry(database: &Database, scan_id: i64, path: &PathBuf) -> Result<Optio
         "#,
     )?;
 
-    let result = stmt.query_row(params![scan_id, path.to_string_lossy().to_string()], |row| {
-        Ok(EntrySummary {
-            entry_type: row.get(0)?,
-            size_bytes: row.get::<_, i64>(1)? as u64,
-            allocated_size_bytes: row.get::<_, i64>(2)? as u64,
-        })
-    });
+    let result = stmt.query_row(
+        params![scan_id, path.to_string_lossy().to_string()],
+        |row| {
+            Ok(EntrySummary {
+                entry_type: row.get(0)?,
+                size_bytes: row.get::<_, i64>(1)? as u64,
+                allocated_size_bytes: row.get::<_, i64>(2)? as u64,
+            })
+        },
+    );
 
     match result {
         Ok(entry) => Ok(Some(entry)),
@@ -158,7 +173,7 @@ fn load_entry(database: &Database, scan_id: i64, path: &PathBuf) -> Result<Optio
 fn load_directory_summary(
     database: &Database,
     scan_id: i64,
-    path: &PathBuf,
+    path: &Path,
 ) -> Result<Option<DirSummary>> {
     let mut stmt = database.connection().prepare(
         r#"
@@ -169,15 +184,18 @@ fn load_directory_summary(
         "#,
     )?;
 
-    let result = stmt.query_row(params![scan_id, path.to_string_lossy().to_string()], |row| {
-        Ok(DirSummary {
-            allocated_size_bytes: row.get::<_, i64>(0)? as u64,
-            total_size_bytes: row.get::<_, i64>(1)? as u64,
-            file_count: row.get::<_, i64>(2)? as u64,
-            dir_count: row.get::<_, i64>(3)? as u64,
-            symlink_count: row.get::<_, i64>(4)? as u64,
-        })
-    });
+    let result = stmt.query_row(
+        params![scan_id, path.to_string_lossy().to_string()],
+        |row| {
+            Ok(DirSummary {
+                allocated_size_bytes: row.get::<_, i64>(0)? as u64,
+                total_size_bytes: row.get::<_, i64>(1)? as u64,
+                file_count: row.get::<_, i64>(2)? as u64,
+                dir_count: row.get::<_, i64>(3)? as u64,
+                symlink_count: row.get::<_, i64>(4)? as u64,
+            })
+        },
+    );
 
     match result {
         Ok(summary) => Ok(Some(summary)),
@@ -189,7 +207,7 @@ fn load_directory_summary(
 fn load_classifications(
     database: &Database,
     scan_id: i64,
-    path: &PathBuf,
+    path: &Path,
 ) -> Result<Vec<ClassificationRow>> {
     let mut stmt = database.connection().prepare(
         r#"
@@ -201,20 +219,23 @@ fn load_classifications(
     )?;
 
     let rows = stmt
-        .query_map(params![scan_id, path.to_string_lossy().to_string()], |row| {
-            Ok(ClassificationRow {
-                label: row.get(0)?,
-                confidence: row.get(1)?,
-                source: row.get(2)?,
-                reason: row.get(3)?,
-            })
-        })?
+        .query_map(
+            params![scan_id, path.to_string_lossy().to_string()],
+            |row| {
+                Ok(ClassificationRow {
+                    label: row.get(0)?,
+                    confidence: row.get(1)?,
+                    source: row.get(2)?,
+                    reason: row.get(3)?,
+                })
+            },
+        )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
     Ok(rows)
 }
 
-fn print_child_summary(database: &Database, scan_id: i64, path: &PathBuf) -> Result<()> {
+fn print_child_summary(database: &Database, scan_id: i64, path: &Path) -> Result<()> {
     let path_str = path.to_string_lossy().to_string();
 
     let mut stmt = database.connection().prepare(
