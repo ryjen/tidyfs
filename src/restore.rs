@@ -234,7 +234,10 @@ mod tests {
         atomic_rename_noreplace(&source, &destination).expect("atomic restore");
 
         assert!(!source.exists());
-        assert_eq!(fs::read(&destination).expect("read destination"), b"payload");
+        assert_eq!(
+            fs::read(&destination).expect("read destination"),
+            b"payload"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
