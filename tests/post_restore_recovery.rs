@@ -142,7 +142,10 @@ fn recover_reconciles_restore_after_post_rename_status_failure() {
         String::from_utf8_lossy(&restore.stdout),
         String::from_utf8_lossy(&restore.stderr)
     );
-    assert_eq!(fs::read(&candidate).expect("read restored payload"), payload);
+    assert_eq!(
+        fs::read(&candidate).expect("read restored payload"),
+        payload
+    );
     assert!(
         !PathBuf::from(&quarantine_path).exists(),
         "quarantine payload remained after restore rename"
@@ -181,6 +184,9 @@ fn recover_reconciles_restore_after_post_rename_status_failure() {
         .expect("query recovered action");
     assert_eq!(recovered_status, "restored");
     assert!(restored_at.is_some());
-    assert_eq!(fs::read(candidate).expect("read reconciled payload"), payload);
+    assert_eq!(
+        fs::read(candidate).expect("read reconciled payload"),
+        payload
+    );
     assert!(!PathBuf::from(quarantine_path).exists());
 }
