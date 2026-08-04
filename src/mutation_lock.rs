@@ -11,8 +11,9 @@ impl MutationLock {
     pub fn acquire(db_path: &Path) -> Result<Self> {
         let path = lock_path(db_path);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating mutation lock directory {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("creating mutation lock directory {}", parent.display())
+            })?;
         }
 
         let file = OpenOptions::new()
@@ -29,8 +30,9 @@ impl MutationLock {
                 db_path.display(),
                 path.display()
             ),
-            Err(TryLockError::Error(err)) => Err(err)
-                .with_context(|| format!("acquiring mutation lock {}", path.display())),
+            Err(TryLockError::Error(err)) => {
+                Err(err).with_context(|| format!("acquiring mutation lock {}", path.display()))
+            }
         }
     }
 }
