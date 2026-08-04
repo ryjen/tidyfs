@@ -30,6 +30,8 @@ struct Candidate {
     action_type: String,
     reversible: bool,
     reason: String,
+    scanned_dev: Option<u64>,
+    scanned_inode: Option<u64>,
 }
 
 pub fn run_clean(database: &Database, query: CleanQuery) -> Result<()> {
@@ -303,7 +305,35 @@ fn preflight_candidate(scan: &ScanInfo, candidate: &Candidate) -> Result<()> {
         bail!("refusing to quarantine symlink path");
     }
 
+    verify_scanned_identity(candidate, &meta)?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn verify_scanned_identity(candidate: &Candidate, metadata: &fs::Metadata) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let scanned_dev = candidate
+        .scanned_dev
+        .context("scan record has no device identity; rescan before cleanup")?;
+    let scanned_inode = candidate
+        .scanned_inode
+        .context("scan record has no inode identity; rescan before cleanup")?;
+    let current_dev = metadata.dev();
+    let current_inode = metadata.ino();
+
+    if current_dev != scanned_dev || current_inode != scanned_inode {
+        bail!(
+            "candidate changed since scan: expected device/inode={scanned_dev}/{scanned_inode}, current={current_dev}/{current_inode}; rescan before cleanup"
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn verify_scanned_identity(_candidate: &Candidate, _metadata: &fs::Metadata) -> Result<()> {
+    bail!("source identity verification is not supported on this platform")
 }
 
 fn insert_action(
@@ -387,19 +417,24 @@ fn load_allowed_candidates(database: &Database, scan_id: i64) -> Result<Vec<Cand
     let mut stmt = database.connection().prepare(
         r#"
         SELECT
-          id,
-          path,
-          size_bytes,
-          rule_id,
-          rule_label,
-          category,
-          risk,
-          action_type,
-          reversible,
-          reason
-        FROM cleanup_candidates
-        WHERE scan_id = ?1
-          AND blocked = 0
+          c.id,
+          c.path,
+          c.size_bytes,
+          c.rule_id,
+          c.rule_label,
+          c.category,
+          c.risk,
+          c.action_type,
+          c.reversible,
+          c.reason,
+          e.dev,
+          e.inode
+        FROM cleanup_candidates c
+        LEFT JOIN entries e
+          ON e.scan_id = c.scan_id
+         AND e.path = c.path
+        WHERE c.scan_id = ?1
+          AND c.blocked = 0
         "#,
     )?;
 
@@ -417,6 +452,8 @@ fn load_allowed_candidates(database: &Database, scan_id: i64) -> Result<Vec<Cand
                 action_type: row.get(7)?,
                 reversible: row.get::<_, i64>(8)? != 0,
                 reason: row.get(9)?,
+                scanned_dev: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
+                scanned_inode: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -451,4 +488,63 @@ fn print_candidate(candidate: &Candidate) {
         if candidate.reversible { "yes" } else { "no" }
     );
     println!("           Reason: {}", candidate.reason);
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{verify_scanned_identity, Candidate};
+    use crate::rules::Risk;
+    use std::fs;
+    use std::os::unix::fs::MetadataExt;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn candidate(path: PathBuf, dev: u64, inode: u64) -> Candidate {
+        Candidate {
+            id: 1,
+            path,
+            size_bytes: 0,
+            rule_id: "test".into(),
+            rule_label: "test".into(),
+            category: "test".into(),
+            risk: Risk::Low,
+            action_type: "quarantine".into(),
+            reversible: true,
+            reason: "test".into(),
+            scanned_dev: Some(dev),
+            scanned_inode: Some(inode),
+        }
+    }
+
+    #[test]
+    fn accepts_the_same_scanned_inode() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("tidyfs-source-id-{nonce}"));
+        fs::write(&path, b"payload").expect("write fixture");
+        let metadata = fs::symlink_metadata(&path).expect("fixture metadata");
+        let candidate = candidate(path.clone(), metadata.dev(), metadata.ino());
+
+        verify_scanned_identity(&candidate, &metadata).expect("same identity should pass");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejects_a_substituted_inode() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("tidyfs-source-id-mismatch-{nonce}"));
+        fs::write(&path, b"replacement").expect("write fixture");
+        let metadata = fs::symlink_metadata(&path).expect("fixture metadata");
+        let candidate = candidate(path.clone(), metadata.dev(), metadata.ino().wrapping_add(1));
+
+        let error = verify_scanned_identity(&candidate, &metadata)
+            .expect_err("substituted inode must be rejected");
+        assert!(error.to_string().contains("candidate changed since scan"));
+        let _ = fs::remove_file(path);
+    }
 }
