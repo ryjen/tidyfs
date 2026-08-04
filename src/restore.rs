@@ -18,6 +18,8 @@ struct RestoreAction {
     quarantine_path: PathBuf,
     status: String,
     restored_at: Option<i64>,
+    payload_sha256: Option<String>,
+    identity_version: Option<String>,
 }
 
 pub fn run_restore(database: &Database, query: RestoreQuery) -> Result<()> {
@@ -54,6 +56,8 @@ pub fn run_restore(database: &Database, query: RestoreQuery) -> Result<()> {
         );
     }
 
+    verify_identity(&action, &action.quarantine_path)
+        .context("quarantine payload identity verification failed")?;
     set_restore_status(database, action.id, "restoring", None)?;
 
     if let Some(parent) = action.original_path.parent() {
@@ -78,6 +82,13 @@ pub fn run_restore(database: &Database, query: RestoreQuery) -> Result<()> {
         return Err(err);
     }
 
+    if let Err(err) = verify_identity(&action, &action.original_path)
+        .context("restored payload identity verification failed")
+    {
+        record_terminal_restore_failure(database, action.id, &err);
+        return Err(err);
+    }
+
     database.connection().execute(
         r#"
         UPDATE actions
@@ -93,6 +104,25 @@ pub fn run_restore(database: &Database, query: RestoreQuery) -> Result<()> {
     println!("restored action_id={}", action.id);
     println!("path: {}", action.original_path.display());
 
+    Ok(())
+}
+
+fn verify_identity(action: &RestoreAction, path: &Path) -> Result<()> {
+    let version = action
+        .identity_version
+        .as_deref()
+        .context("action has no payload identity version")?;
+    if version != "sha256-tree-v1" {
+        bail!("unsupported payload identity version: {version}");
+    }
+    let expected = action
+        .payload_sha256
+        .as_deref()
+        .context("action has no payload SHA-256 fingerprint")?;
+    let actual = util::fingerprint(path)?;
+    if actual != expected {
+        bail!("payload identity mismatch: expected={expected} actual={actual}");
+    }
     Ok(())
 }
 
@@ -166,10 +196,16 @@ fn record_restore_failure(database: &Database, action_id: i64, error: &anyhow::E
     let _ = set_restore_status(database, action_id, "quarantined", Some(&message));
 }
 
+fn record_terminal_restore_failure(database: &Database, action_id: i64, error: &anyhow::Error) {
+    let message = format!("{error:#}");
+    let _ = set_restore_status(database, action_id, "failed", Some(&message));
+}
+
 fn load_latest_action(database: &Database) -> Result<RestoreAction> {
     let mut stmt = database.connection().prepare(
         r#"
-        SELECT id, original_path, quarantine_path, status, restored_at
+        SELECT id, original_path, quarantine_path, status, restored_at,
+               payload_sha256, identity_version
         FROM actions
         WHERE status = 'quarantined'
           AND quarantine_path IS NOT NULL
@@ -185,7 +221,8 @@ fn load_latest_action(database: &Database) -> Result<RestoreAction> {
 fn load_action(database: &Database, action_id: i64) -> Result<RestoreAction> {
     let mut stmt = database.connection().prepare(
         r#"
-        SELECT id, original_path, quarantine_path, status, restored_at
+        SELECT id, original_path, quarantine_path, status, restored_at,
+               payload_sha256, identity_version
         FROM actions
         WHERE id = ?1
         "#,
@@ -202,6 +239,8 @@ fn row_to_action(row: &rusqlite::Row<'_>) -> rusqlite::Result<RestoreAction> {
         quarantine_path: PathBuf::from(row.get::<_, String>(2)?),
         status: row.get(3)?,
         restored_at: row.get(4)?,
+        payload_sha256: row.get(5)?,
+        identity_version: row.get(6)?,
     })
 }
 

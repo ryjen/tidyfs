@@ -1,3 +1,8 @@
+#[path = "identity.rs"]
+mod identity;
+
+pub use identity::fingerprint;
+
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};

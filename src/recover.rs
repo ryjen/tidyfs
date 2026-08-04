@@ -17,6 +17,8 @@ struct RecoveryAction {
     original_path: PathBuf,
     quarantine_path: Option<PathBuf>,
     status: String,
+    payload_sha256: Option<String>,
+    identity_version: Option<String>,
 }
 
 pub fn run_recover(database: &Database, query: RecoverQuery) -> Result<()> {
@@ -104,6 +106,15 @@ fn reconcile_quarantine(
 ) -> Result<&'static str> {
     match (original_exists, quarantine_exists) {
         (false, true) => {
+            let quarantine_path = action.quarantine_path.as_ref().expect("checked above");
+            if let Err(err) = verify_identity(action, quarantine_path) {
+                mark_failed(
+                    database,
+                    action.id,
+                    &format!("quarantine payload identity verification failed: {err:#}"),
+                )?;
+                return Ok("failed");
+            }
             database.connection().execute(
                 r#"
                 UPDATE actions
@@ -150,6 +161,14 @@ fn reconcile_restore(
 ) -> Result<&'static str> {
     match (original_exists, quarantine_exists) {
         (true, false) => {
+            if let Err(err) = verify_identity(action, &action.original_path) {
+                mark_failed(
+                    database,
+                    action.id,
+                    &format!("restored payload identity verification failed: {err:#}"),
+                )?;
+                return Ok("failed");
+            }
             database.connection().execute(
                 r#"
                 UPDATE actions
@@ -164,6 +183,15 @@ fn reconcile_restore(
             Ok("restored")
         }
         (false, true) => {
+            let quarantine_path = action.quarantine_path.as_ref().expect("checked above");
+            if let Err(err) = verify_identity(action, quarantine_path) {
+                mark_failed(
+                    database,
+                    action.id,
+                    &format!("quarantine payload identity verification failed: {err:#}"),
+                )?;
+                return Ok("failed");
+            }
             database.connection().execute(
                 r#"
                 UPDATE actions
@@ -194,6 +222,25 @@ fn reconcile_restore(
     }
 }
 
+fn verify_identity(action: &RecoveryAction, path: &Path) -> Result<()> {
+    let version = action
+        .identity_version
+        .as_deref()
+        .context("action has no payload identity version")?;
+    if version != "sha256-tree-v1" {
+        bail!("unsupported payload identity version: {version}");
+    }
+    let expected = action
+        .payload_sha256
+        .as_deref()
+        .context("action has no payload SHA-256 fingerprint")?;
+    let actual = util::fingerprint(path)?;
+    if actual != expected {
+        bail!("payload identity mismatch: expected={expected} actual={actual}");
+    }
+    Ok(())
+}
+
 fn mark_failed(database: &Database, action_id: i64, error: &str) -> Result<()> {
     database.connection().execute(
         r#"
@@ -218,7 +265,8 @@ fn path_entry_exists(path: &Path) -> Result<bool> {
 fn load_interrupted_actions(database: &Database) -> Result<Vec<RecoveryAction>> {
     let mut stmt = database.connection().prepare(
         r#"
-        SELECT id, original_path, quarantine_path, status
+        SELECT id, original_path, quarantine_path, status,
+               payload_sha256, identity_version
         FROM actions
         WHERE status IN ('planned', 'moving', 'restoring')
         ORDER BY timestamp ASC, id ASC
@@ -234,7 +282,8 @@ fn load_interrupted_actions(database: &Database) -> Result<Vec<RecoveryAction>> 
 fn load_action(database: &Database, action_id: i64) -> Result<RecoveryAction> {
     let mut stmt = database.connection().prepare(
         r#"
-        SELECT id, original_path, quarantine_path, status
+        SELECT id, original_path, quarantine_path, status,
+               payload_sha256, identity_version
         FROM actions
         WHERE id = ?1
         "#,
@@ -250,5 +299,7 @@ fn row_to_action(row: &rusqlite::Row<'_>) -> rusqlite::Result<RecoveryAction> {
         original_path: PathBuf::from(row.get::<_, String>(1)?),
         quarantine_path: row.get::<_, Option<String>>(2)?.map(PathBuf::from),
         status: row.get(3)?,
+        payload_sha256: row.get(4)?,
+        identity_version: row.get(5)?,
     })
 }

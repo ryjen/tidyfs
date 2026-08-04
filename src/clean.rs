@@ -214,8 +214,10 @@ fn quarantine_candidate(
     quarantine_root: &Path,
 ) -> Result<i64> {
     preflight_candidate(scan, candidate)?;
+    let payload_sha256 = util::fingerprint(&candidate.path)
+        .with_context(|| format!("fingerprinting {}", candidate.path.display()))?;
 
-    let action_id = insert_action(database, scan.id, candidate)?;
+    let action_id = insert_action(database, scan.id, candidate, &payload_sha256)?;
     let action_dir = quarantine_root.join(format!("action-{action_id}"));
     let payload_path = action_dir.join("payload");
     let manifest_path = action_dir.join("manifest.txt");
@@ -227,7 +229,7 @@ fn quarantine_candidate(
             .with_context(|| format!("creating action quarantine dir {}", action_dir.display()))?;
 
         let manifest = format!(
-            "action_id={}\nscan_id={}\ncandidate_id={}\noriginal_path={}\nquarantine_path={}\nrule_id={}\nrisk={}\nsize_bytes={}\n",
+            "action_id={}\nscan_id={}\ncandidate_id={}\noriginal_path={}\nquarantine_path={}\nrule_id={}\nrisk={}\nsize_bytes={}\nidentity_version=sha256-tree-v1\npayload_sha256={}\n",
             action_id,
             scan.id,
             candidate.id,
@@ -236,6 +238,7 @@ fn quarantine_candidate(
             candidate.rule_id,
             candidate.risk,
             candidate.size_bytes,
+            payload_sha256,
         );
         fs::write(&manifest_path, manifest)
             .with_context(|| format!("writing manifest {}", manifest_path.display()))?;
@@ -256,6 +259,16 @@ fn quarantine_candidate(
             payload_path.display()
         )
     }) {
+        record_action_failure(database, action_id, &err);
+        return Err(err);
+    }
+
+    let quarantined_sha256 = util::fingerprint(&payload_path)
+        .with_context(|| format!("verifying quarantined payload {}", payload_path.display()))?;
+    if quarantined_sha256 != payload_sha256 {
+        let err = anyhow::anyhow!(
+            "payload identity changed during quarantine: expected={payload_sha256} actual={quarantined_sha256}"
+        );
         record_action_failure(database, action_id, &err);
         return Err(err);
     }
@@ -291,14 +304,20 @@ fn preflight_candidate(scan: &ScanInfo, candidate: &Candidate) -> Result<()> {
     Ok(())
 }
 
-fn insert_action(database: &Database, scan_id: i64, candidate: &Candidate) -> Result<i64> {
+fn insert_action(
+    database: &Database,
+    scan_id: i64,
+    candidate: &Candidate,
+    payload_sha256: &str,
+) -> Result<i64> {
     database.connection().execute(
         r#"
         INSERT INTO actions(
           timestamp, scan_id, candidate_id, original_path, quarantine_path,
-          action_type, size_bytes, rule_id, risk, status, error
+          action_type, size_bytes, rule_id, risk, status, error,
+          payload_sha256, identity_version
         )
-        VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, 'planned', NULL)
+        VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, 'planned', NULL, ?9, 'sha256-tree-v1')
         "#,
         params![
             util::unix_now(),
@@ -309,6 +328,7 @@ fn insert_action(database: &Database, scan_id: i64, candidate: &Candidate) -> Re
             candidate.size_bytes as i64,
             candidate.rule_id,
             candidate.risk.to_string(),
+            payload_sha256,
         ],
     )?;
 
