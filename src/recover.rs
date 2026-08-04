@@ -108,7 +108,11 @@ fn reconcile_quarantine(
         (false, true) => {
             let quarantine_path = action.quarantine_path.as_ref().expect("checked above");
             if let Err(err) = verify_identity(action, quarantine_path) {
-                mark_failed(database, action.id, &format!("quarantine payload identity verification failed: {err:#}"))?;
+                mark_failed(
+                    database,
+                    action.id,
+                    &format!("quarantine payload identity verification failed: {err:#}"),
+                )?;
                 return Ok("failed");
             }
             database.connection().execute(
@@ -158,7 +162,11 @@ fn reconcile_restore(
     match (original_exists, quarantine_exists) {
         (true, false) => {
             if let Err(err) = verify_identity(action, &action.original_path) {
-                mark_failed(database, action.id, &format!("restored payload identity verification failed: {err:#}"))?;
+                mark_failed(
+                    database,
+                    action.id,
+                    &format!("restored payload identity verification failed: {err:#}"),
+                )?;
                 return Ok("failed");
             }
             database.connection().execute(
@@ -177,7 +185,11 @@ fn reconcile_restore(
         (false, true) => {
             let quarantine_path = action.quarantine_path.as_ref().expect("checked above");
             if let Err(err) = verify_identity(action, quarantine_path) {
-                mark_failed(database, action.id, &format!("quarantine payload identity verification failed: {err:#}"))?;
+                mark_failed(
+                    database,
+                    action.id,
+                    &format!("quarantine payload identity verification failed: {err:#}"),
+                )?;
                 return Ok("failed");
             }
             database.connection().execute(
