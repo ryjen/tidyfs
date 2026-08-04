@@ -73,8 +73,10 @@ A crash after step 5 leaves `moving` with the payload in quarantine. `recover` d
 1. Validate that the quarantine payload exists and the destination is absent.
 2. Persist `restoring`.
 3. Create missing parent directories.
-4. Rename the quarantine payload to the original path.
+4. Atomically rename the quarantine payload to the original path without replacement.
 5. Persist `restored` and `restored_at`.
+
+On Linux, step 4 uses `renameat2(RENAME_NOREPLACE)`. If another process creates the destination after preflight, the kernel rejects the restore and preserves both paths. Platforms without an equivalent primitive fail closed rather than falling back to overwrite-prone rename behavior.
 
 A crash after step 4 leaves `restoring` with the payload at the original path. `recover` deterministically advances it to `restored`.
 
@@ -86,15 +88,16 @@ The recovery model protects against:
 - machine restart or power loss during a cleanup or restore transition;
 - database write failure after a successful filesystem move;
 - ordinary rename failures, which are recorded as terminal cleanup failures or restorable restore failures;
+- concurrent cooperating `tidyfs` mutation commands through a database-scoped advisory lock;
+- external writers racing restore destination creation on Linux through atomic no-replace rename;
 - ambiguous path states, which are never resolved by deleting or overwriting either path.
 
 The current slice does **not** yet provide:
 
-- a process-wide mutation lock;
-- atomic no-replace rename semantics against an external writer racing restore;
 - automatic recovery on startup;
 - recovery across cross-filesystem copy-and-remove operations;
-- cryptographic payload identity verification.
+- cryptographic payload identity verification;
+- atomic no-replace restore support on non-Linux platforms.
 
 Until those controls are implemented, use `recover --all` after an interrupted mutation and inspect `tidyfs actions` before retrying cleanup or restore.
 
