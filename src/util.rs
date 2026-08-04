@@ -35,10 +35,11 @@ fn warn_if_interrupted_actions(database_path: &Path) {
     match interrupted_action_count(database_path) {
         Ok(0) => {}
         Ok(count) => {
+            eprintln!("warning: {count} interrupted tidyfs action(s) require reconciliation");
             eprintln!(
-                "warning: {count} interrupted tidyfs action(s) require reconciliation"
+                "run `tidyfs --db {} recover --all`",
+                database_path.display()
             );
-            eprintln!("run `tidyfs --db {} recover --all`", database_path.display());
         }
         Err(err) => {
             eprintln!(
@@ -56,11 +57,11 @@ fn interrupted_action_count(database_path: &Path) -> Result<u64> {
 
     let connection = Connection::open_with_flags(database_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| {
-            format!(
-                "opening SQLite database read-only for startup recovery check: {}",
-                database_path.display()
-            )
-        })?;
+        format!(
+            "opening SQLite database read-only for startup recovery check: {}",
+            database_path.display()
+        )
+    })?;
 
     let actions_table_exists: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'actions')",
