@@ -129,7 +129,10 @@ fn recover_reconciles_quarantine_after_post_rename_status_failure() {
         b"yes\n",
     );
     assert_success(&clean);
-    assert!(!candidate.exists(), "rename did not complete before failure");
+    assert!(
+        !candidate.exists(),
+        "rename did not complete before failure"
+    );
 
     let conn = sandbox.connection();
     let (action_id, quarantine_path, status): (i64, String, String) = conn
