@@ -4,6 +4,7 @@ mod classify;
 mod clean;
 mod db;
 mod explain;
+mod mutation_lock;
 mod plan;
 mod recover;
 mod restore;
@@ -313,7 +314,12 @@ fn main() -> Result<()> {
                 root,
                 limit,
             };
-            clean::run_clean(&database, query)?;
+            if dry_run {
+                clean::run_clean(&database, query)?;
+            } else {
+                let _lock = mutation_lock::MutationLock::acquire(&db_path)?;
+                clean::run_clean(&database, query)?;
+            }
         }
         Command::Adapters => {
             adapters::print_adapters();
@@ -322,6 +328,7 @@ fn main() -> Result<()> {
             actions::print_actions(&database, actions::ActionsQuery { limit })?;
         }
         Command::Recover { action, all } => {
+            let _lock = mutation_lock::MutationLock::acquire(&db_path)?;
             recover::run_recover(
                 &database,
                 recover::RecoverQuery {
@@ -331,6 +338,7 @@ fn main() -> Result<()> {
             )?;
         }
         Command::Restore { action, latest } => {
+            let _lock = mutation_lock::MutationLock::acquire(&db_path)?;
             restore::run_restore(
                 &database,
                 restore::RestoreQuery {
