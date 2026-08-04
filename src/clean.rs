@@ -214,6 +214,8 @@ fn quarantine_candidate(
     quarantine_root: &Path,
 ) -> Result<i64> {
     preflight_candidate(scan, candidate)?;
+    tidyfs::filesystem_boundary::ensure_same_filesystem(&candidate.path, quarantine_root)?;
+
     let payload_sha256 = util::fingerprint(&candidate.path)
         .with_context(|| format!("fingerprinting {}", candidate.path.display()))?;
 
