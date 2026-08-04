@@ -20,6 +20,7 @@ impl MutationLock {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&path)
             .with_context(|| format!("opening mutation lock {}", path.display()))?;
 
