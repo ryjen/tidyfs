@@ -151,7 +151,9 @@ impl Database {
               status TEXT NOT NULL,
               error TEXT,
               restored_at INTEGER,
-              restore_error TEXT
+              restore_error TEXT,
+              payload_sha256 TEXT,
+              identity_version TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_actions_timestamp
@@ -166,6 +168,8 @@ impl Database {
             "#,
         )?;
 
+        ensure_action_column(&self.conn, "payload_sha256", "TEXT")?;
+        ensure_action_column(&self.conn, "identity_version", "TEXT")?;
         Ok(())
     }
 
@@ -226,4 +230,19 @@ impl Database {
 
         Ok(scan)
     }
+}
+
+fn ensure_action_column(connection: &Connection, column: &str, definition: &str) -> Result<()> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('actions') WHERE name = ?1)",
+        params![column],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        connection.execute(
+            &format!("ALTER TABLE actions ADD COLUMN {column} {definition}"),
+            [],
+        )?;
+    }
+    Ok(())
 }
