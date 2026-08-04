@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 pub struct MutationLock {
     _file: File,
-    path: PathBuf,
 }
 
 impl MutationLock {
@@ -24,7 +23,7 @@ impl MutationLock {
             .with_context(|| format!("opening mutation lock {}", path.display()))?;
 
         match file.try_lock() {
-            Ok(()) => Ok(Self { _file: file, path }),
+            Ok(()) => Ok(Self { _file: file }),
             Err(TryLockError::WouldBlock) => bail!(
                 "another tidyfs mutation is already running for database {}; lock={}",
                 db_path.display(),
@@ -33,11 +32,6 @@ impl MutationLock {
             Err(TryLockError::Error(err)) => Err(err)
                 .with_context(|| format!("acquiring mutation lock {}", path.display())),
         }
-    }
-
-    #[cfg(test)]
-    fn path(&self) -> &Path {
-        &self.path
     }
 }
 
@@ -67,9 +61,12 @@ mod tests {
         ));
         let db_path = root.join("state/tidyfs.db");
 
-        let first = MutationLock::acquire(&db_path).expect("acquire first mutation lock");
-        assert_eq!(first.path(), root.join("state/tidyfs.db.mutation.lock"));
+        assert_eq!(
+            lock_path(&db_path),
+            root.join("state/tidyfs.db.mutation.lock")
+        );
 
+        let first = MutationLock::acquire(&db_path).expect("acquire first mutation lock");
         let error = MutationLock::acquire(&db_path)
             .err()
             .expect("second mutation lock should be rejected");
