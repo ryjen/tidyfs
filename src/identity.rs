@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
+use std::fmt::Write as _;
 use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::Read;
+use std::path::Path;
 
 pub fn fingerprint(path: &Path) -> Result<String> {
     let mut hasher = Sha256::new();
@@ -239,6 +240,7 @@ impl Sha256 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
