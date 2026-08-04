@@ -35,8 +35,7 @@ fn hash_entry(path: &Path, relative: &Path, hasher: &mut Sha256) -> Result<()> {
         let mut children = fs::read_dir(path)
             .with_context(|| format!("reading payload directory {}", path.display()))?
             .collect::<std::io::Result<Vec<_>>>()?;
-        children
-            .sort_by(|left, right| os_bytes(&left.file_name()).cmp(&os_bytes(&right.file_name())));
+        children.sort_by_key(|entry| os_bytes(&entry.file_name()));
 
         for child in children {
             let name = child.file_name();
