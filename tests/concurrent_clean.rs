@@ -136,7 +136,8 @@ fn second_concurrent_clean_is_rejected_by_database_scoped_lock() {
         String::from_utf8_lossy(&second.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&second.stderr).contains("another tidyfs mutation is already running"),
+        String::from_utf8_lossy(&second.stderr)
+            .contains("another tidyfs mutation is already running"),
         "second clean did not report lock contention: {}",
         String::from_utf8_lossy(&second.stderr)
     );
@@ -150,7 +151,10 @@ fn second_concurrent_clean_is_rejected_by_database_scoped_lock() {
     let first_status = first.wait().expect("wait for first clean");
     assert!(first_status.success(), "first clean did not abort cleanly");
 
-    assert_eq!(fs::read(&candidate).expect("read preserved candidate"), payload);
+    assert_eq!(
+        fs::read(&candidate).expect("read preserved candidate"),
+        payload
+    );
     let actions: i64 = sandbox
         .connection()
         .query_row("SELECT COUNT(*) FROM actions", [], |row| row.get(0))
