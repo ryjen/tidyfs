@@ -158,3 +158,21 @@ Why this shape:
 - no deletion behavior changes
 
 This is not the final high-performance design, but it removes the obvious single-threaded traversal bottleneck while preserving the safety model.
+
+## Development and quality gates
+
+Run the same core checks locally that CI uses before opening or merging a pull request:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features --locked
+cargo package --locked
+```
+
+CI also runs a RustSec dependency audit. The stable required check names are:
+
+- `Rust quality`
+- `Dependency audit`
+
+The dependency-audit job is intentionally read-only with respect to repository contents and receives only the additional GitHub Checks permission required to publish its audit result.
