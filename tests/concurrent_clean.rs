@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, ChildStdout, Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct Sandbox {
@@ -68,7 +68,7 @@ fn assert_success(output: &Output) {
     );
 }
 
-fn wait_for_prompt(child: &mut Child, expected: &str) {
+fn wait_for_prompt(child: &mut Child, expected: &str) -> ChildStdout {
     let mut stdout = child.stdout.take().expect("open first clean stdout");
     let mut received = Vec::new();
     let expected = expected.as_bytes();
@@ -84,7 +84,7 @@ fn wait_for_prompt(child: &mut Child, expected: &str) {
         );
         received.push(byte[0]);
         if received.ends_with(expected) {
-            return;
+            return stdout;
         }
     }
 }
@@ -123,7 +123,7 @@ fn second_concurrent_clean_is_rejected_by_database_scoped_lock() {
         .spawn()
         .expect("spawn first clean");
 
-    wait_for_prompt(
+    let _first_stdout = wait_for_prompt(
         &mut first,
         "Proceed with quarantine? Type 'yes' to continue: ",
     );
