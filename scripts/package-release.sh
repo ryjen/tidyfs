@@ -67,7 +67,10 @@ printf '%s\n' \
   "${bundle}/${crate_name}" | sort > "${expected_contents}"
 
 diff -u "${expected_contents}" "${actual_contents}"
-sha256sum --check "${checksum}"
+(
+  cd "${dist_dir}"
+  sha256sum --check "${bundle}.tar.gz.sha256"
+)
 
 echo "verified ${archive}"
 echo "verified ${checksum}"
