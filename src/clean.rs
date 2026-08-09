@@ -221,6 +221,9 @@ fn quarantine_candidate(
     let payload_sha256 = util::fingerprint(&candidate.path)
         .with_context(|| format!("fingerprinting {}", candidate.path.display()))?;
 
+    verify_candidate_at_path(candidate, &candidate.path)
+        .context("source changed while fingerprinting; rescan before cleanup")?;
+
     let action_id = insert_action(database, scan.id, candidate, &payload_sha256)?;
     let action_dir = quarantine_root.join(format!("action-{action_id}"));
     let payload_path = action_dir.join("payload");
@@ -256,6 +259,13 @@ fn quarantine_candidate(
 
     set_action_status(database, action_id, "moving", None)?;
 
+    if let Err(err) = verify_candidate_at_path(candidate, &candidate.path)
+        .context("source changed immediately before quarantine rename; rescan before cleanup")
+    {
+        record_action_failure(database, action_id, &err);
+        return Err(err);
+    }
+
     if let Err(err) = fs::rename(&candidate.path, &payload_path).with_context(|| {
         format!(
             "moving {} to {}",
@@ -263,6 +273,13 @@ fn quarantine_candidate(
             payload_path.display()
         )
     }) {
+        record_action_failure(database, action_id, &err);
+        return Err(err);
+    }
+
+    if let Err(err) = verify_candidate_at_path(candidate, &payload_path)
+        .context("moved payload is not the filesystem object recorded by the scan")
+    {
         record_action_failure(database, action_id, &err);
         return Err(err);
     }
@@ -298,15 +315,19 @@ fn preflight_candidate(scan: &ScanInfo, candidate: &Candidate) -> Result<()> {
         bail!("candidate path is outside scanned root");
     }
 
-    let meta = fs::symlink_metadata(&candidate.path)
-        .with_context(|| format!("reading metadata for {}", candidate.path.display()))?;
+    verify_candidate_at_path(candidate, &candidate.path)?;
+    Ok(())
+}
 
-    if meta.file_type().is_symlink() {
-        bail!("refusing to quarantine symlink path");
+fn verify_candidate_at_path(candidate: &Candidate, path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("reading metadata for {}", path.display()))?;
+
+    if metadata.file_type().is_symlink() {
+        bail!("refusing to quarantine symlink path: {}", path.display());
     }
 
-    verify_scanned_identity(candidate, &meta)?;
-    Ok(())
+    verify_scanned_identity(candidate, &metadata)
 }
 
 #[cfg(unix)]
@@ -492,10 +513,10 @@ fn print_candidate(candidate: &Candidate) {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{verify_scanned_identity, Candidate};
+    use super::{verify_candidate_at_path, verify_scanned_identity, Candidate};
     use crate::rules::Risk;
     use std::fs;
-    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::{symlink, MetadataExt};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -516,13 +537,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn accepts_the_same_scanned_inode() {
+    fn fixture_path(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock before epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("tidyfs-source-id-{nonce}"));
+        std::env::temp_dir().join(format!("tidyfs-{name}-{}-{nonce}", std::process::id()))
+    }
+
+    #[test]
+    fn accepts_the_same_scanned_inode() {
+        let path = fixture_path("source-id");
         fs::write(&path, b"payload").expect("write fixture");
         let metadata = fs::symlink_metadata(&path).expect("fixture metadata");
         let candidate = candidate(path.clone(), metadata.dev(), metadata.ino());
@@ -533,11 +558,7 @@ mod tests {
 
     #[test]
     fn rejects_a_substituted_inode() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock before epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("tidyfs-source-id-mismatch-{nonce}"));
+        let path = fixture_path("source-id-mismatch");
         fs::write(&path, b"replacement").expect("write fixture");
         let metadata = fs::symlink_metadata(&path).expect("fixture metadata");
         let candidate = candidate(path.clone(), metadata.dev(), metadata.ino().wrapping_add(1));
@@ -546,5 +567,57 @@ mod tests {
             .expect_err("substituted inode must be rejected");
         assert!(error.to_string().contains("candidate changed since scan"));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejects_same_content_path_replacement() {
+        let path = fixture_path("source-replacement");
+        let replacement = fixture_path("source-replacement-new");
+        fs::write(&path, b"same-content").expect("write original fixture");
+        fs::write(&replacement, b"same-content").expect("write replacement fixture");
+
+        let original_metadata = fs::symlink_metadata(&path).expect("original metadata");
+        let replacement_metadata =
+            fs::symlink_metadata(&replacement).expect("replacement metadata");
+        assert_ne!(
+            (original_metadata.dev(), original_metadata.ino()),
+            (replacement_metadata.dev(), replacement_metadata.ino()),
+            "fixtures must have distinct filesystem identities"
+        );
+        let candidate = candidate(
+            path.clone(),
+            original_metadata.dev(),
+            original_metadata.ino(),
+        );
+
+        fs::rename(&replacement, &path).expect("replace original path");
+
+        let error = verify_candidate_at_path(&candidate, &path)
+            .expect_err("same-content replacement must be rejected by inode identity");
+        assert!(error.to_string().contains("candidate changed since scan"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejects_symlink_replacement() {
+        let path = fixture_path("source-symlink");
+        let target = fixture_path("source-symlink-target");
+        fs::write(&path, b"payload").expect("write original fixture");
+        fs::write(&target, b"target").expect("write symlink target");
+        let original_metadata = fs::symlink_metadata(&path).expect("original metadata");
+        let candidate = candidate(
+            path.clone(),
+            original_metadata.dev(),
+            original_metadata.ino(),
+        );
+
+        fs::remove_file(&path).expect("remove original fixture");
+        symlink(&target, &path).expect("replace candidate with symlink");
+
+        let error = verify_candidate_at_path(&candidate, &path)
+            .expect_err("symlink replacement must be rejected");
+        assert!(error.to_string().contains("refusing to quarantine symlink path"));
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(target);
     }
 }
