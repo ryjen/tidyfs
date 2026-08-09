@@ -5,6 +5,9 @@ edition = "2021"
 description = "Conservative disk usage scanner and cleanup planner for developer machines"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ryjen/tidyfs"
+readme = "README.md"
+keywords = ["filesystem", "disk-usage", "cleanup", "cli", "developer-tools"]
+categories = ["command-line-utilities", "filesystem"]
 
 [dependencies]
 anyhow = "1"
