@@ -184,9 +184,13 @@ fn scan_reports_invalid_utf8_names_without_lossy_indexing() {
     );
 
     let conn = sandbox.connection();
-    let mut stmt = conn.prepare("SELECT path, name FROM entries").expect("prepare entries query");
+    let mut stmt = conn
+        .prepare("SELECT path, name FROM entries")
+        .expect("prepare entries query");
     let rows = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .expect("query indexed paths")
         .collect::<rusqlite::Result<Vec<_>>>()
         .expect("collect indexed paths");
@@ -211,6 +215,12 @@ fn scan_reports_invalid_utf8_names_without_lossy_indexing() {
     assert_eq!(invalid_errors, 2);
     assert_eq!(null_error_paths, 2);
 
-    assert_eq!(fs::read(&first).expect("read first invalid fixture"), b"first");
-    assert_eq!(fs::read(&second).expect("read second invalid fixture"), b"second");
+    assert_eq!(
+        fs::read(&first).expect("read first invalid fixture"),
+        b"first"
+    );
+    assert_eq!(
+        fs::read(&second).expect("read second invalid fixture"),
+        b"second"
+    );
 }
