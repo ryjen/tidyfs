@@ -616,7 +616,9 @@ mod tests {
 
         let error = verify_candidate_at_path(&candidate, &path)
             .expect_err("symlink replacement must be rejected");
-        assert!(error.to_string().contains("refusing to quarantine symlink path"));
+        assert!(error
+            .to_string()
+            .contains("refusing to quarantine symlink path"));
         let _ = fs::remove_file(path);
         let _ = fs::remove_file(target);
     }
