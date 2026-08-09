@@ -86,6 +86,8 @@ enum ScanMessage {
 }
 
 pub fn scan_path(database: &mut Database, root: &Path, options: ScanOptions) -> Result<ScanResult> {
+    path_text(root).context("scan root cannot be represented losslessly in the SQLite index")?;
+
     let started_at = util::unix_now();
     let root_dev = fs::symlink_metadata(root)
         .ok()
@@ -291,13 +293,14 @@ fn begin_scan(
     options: ScanOptions,
     started_at: i64,
 ) -> Result<i64> {
+    let root_path = path_text(root)?;
     tx.execute(
         r#"
         INSERT INTO scans(root_path, started_at, status, one_file_system, include_pseudo)
         VALUES (?1, ?2, 'running', ?3, ?4)
         "#,
         params![
-            root.to_string_lossy(),
+            root_path,
             started_at,
             options.one_file_system as i64,
             options.include_pseudo as i64,
@@ -345,7 +348,18 @@ fn is_linux_pseudo_path(path: &Path) -> bool {
     pseudo.iter().any(|prefix| path.starts_with(prefix))
 }
 
+fn path_text(path: &Path) -> Result<&str> {
+    path.to_str().with_context(|| {
+        format!(
+            "non-UTF-8 filesystem path is unsupported: {:?}",
+            path.as_os_str()
+        )
+    })
+}
+
 fn record_from_path(path: &Path) -> Result<EntryRecord> {
+    path_text(path)?;
+
     let path = path.to_path_buf();
     let metadata = fs::symlink_metadata(&path)
         .with_context(|| format!("reading metadata for {}", path.display()))?;
@@ -367,13 +381,42 @@ fn record_from_path(path: &Path) -> Result<EntryRecord> {
         None
     };
 
+    if let Some(target) = symlink_target.as_deref() {
+        path_text(target).with_context(|| {
+            format!(
+                "symlink target for {:?} cannot be represented losslessly",
+                path.as_os_str()
+            )
+        })?;
+    }
+
+    let name = match path.file_name() {
+        Some(name) => name
+            .to_str()
+            .with_context(|| format!("non-UTF-8 filesystem name is unsupported: {:?}", name))?
+            .to_string(),
+        None => path_text(&path)?.to_string(),
+    };
+
+    let extension = path
+        .extension()
+        .map(|extension| {
+            extension
+                .to_str()
+                .with_context(|| {
+                    format!(
+                        "non-UTF-8 filesystem extension is unsupported: {:?}",
+                        extension
+                    )
+                })
+                .map(str::to_string)
+        })
+        .transpose()?;
+
     Ok(EntryRecord {
         parent_path: path.parent().map(Path::to_path_buf),
-        name: path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string_lossy().to_string()),
-        extension: path.extension().map(|e| e.to_string_lossy().to_string()),
+        name,
+        extension,
         path,
         entry_type,
         size_bytes: metadata.len(),
@@ -432,6 +475,14 @@ fn aggregate_record(
 }
 
 fn insert_entry(tx: &Transaction<'_>, scan_id: i64, record: &EntryRecord) -> Result<()> {
+    let path = path_text(&record.path)?;
+    let parent_path = record.parent_path.as_deref().map(path_text).transpose()?;
+    let symlink_target = record
+        .symlink_target
+        .as_deref()
+        .map(path_text)
+        .transpose()?;
+
     tx.execute(
         r#"
         INSERT INTO entries(
@@ -451,11 +502,8 @@ fn insert_entry(tx: &Transaction<'_>, scan_id: i64, record: &EntryRecord) -> Res
         "#,
         params![
             scan_id,
-            record.path.to_string_lossy(),
-            record
-                .parent_path
-                .as_ref()
-                .map(|p| p.to_string_lossy().to_string()),
+            path,
+            parent_path,
             record.name,
             record.entry_type.as_str(),
             record.size_bytes as i64,
@@ -469,10 +517,7 @@ fn insert_entry(tx: &Transaction<'_>, scan_id: i64, record: &EntryRecord) -> Res
             record.dev.map(|v| v as i64),
             record.inode.map(|v| v as i64),
             record.extension,
-            record
-                .symlink_target
-                .as_ref()
-                .map(|p| p.to_string_lossy().to_string()),
+            symlink_target,
         ],
     )?;
 
@@ -495,9 +540,10 @@ fn insert_directory_totals(
     )?;
 
     for (path, agg) in aggregations {
+        let path = path_text(path)?;
         stmt.execute(params![
             scan_id,
-            path.to_string_lossy(),
+            path,
             agg.total_size as i64,
             agg.allocated_size as i64,
             agg.file_count as i64,
@@ -516,13 +562,12 @@ fn insert_scan_error(
     path: Option<&Path>,
     error: &str,
 ) -> Result<()> {
+    // The error text contains a debug representation of invalid byte paths. The path column is
+    // deliberately NULL when the path itself is not valid UTF-8 rather than storing lossy text.
+    let path = path.and_then(Path::to_str);
     tx.execute(
         "INSERT INTO scan_errors(scan_id, path, error) VALUES (?1, ?2, ?3)",
-        params![
-            scan_id,
-            path.map(|p| p.to_string_lossy().to_string()),
-            error
-        ],
+        params![scan_id, path, error],
     )?;
 
     Ok(())

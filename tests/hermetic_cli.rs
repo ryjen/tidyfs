@@ -158,3 +158,69 @@ fn scan_records_symlink_without_following_external_target() {
         .expect("query external target");
     assert_eq!(external_count, 0, "symlink target was followed");
 }
+
+#[cfg(unix)]
+#[test]
+fn scan_reports_invalid_utf8_names_without_lossy_indexing() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let sandbox = Sandbox::new("invalid-utf8");
+    let first = sandbox
+        .scan_root
+        .join(OsString::from_vec(b"cache-\x80".to_vec()));
+    let second = sandbox
+        .scan_root
+        .join(OsString::from_vec(b"cache-\x81".to_vec()));
+    fs::write(&first, b"first").expect("write first invalid UTF-8 fixture");
+    fs::write(&second, b"second").expect("write second invalid UTF-8 fixture");
+
+    let output = sandbox.run(&["scan", sandbox.scan_root.to_str().expect("UTF-8 temp path")]);
+    assert_success(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("errors: 2"),
+        "scan did not report both invalid UTF-8 paths: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let conn = sandbox.connection();
+    let mut stmt = conn
+        .prepare("SELECT path, name FROM entries")
+        .expect("prepare entries query");
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("query indexed paths")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("collect indexed paths");
+    assert!(
+        rows.iter()
+            .all(|(path, name)| !path.contains('\u{fffd}') && !name.contains('\u{fffd}')),
+        "lossy replacement characters entered the index: {rows:?}"
+    );
+
+    let (invalid_errors, null_error_paths): (i64, i64) = conn
+        .query_row(
+            r#"
+            SELECT
+              SUM(CASE WHEN error LIKE '%non-UTF-8 filesystem path is unsupported%' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN path IS NULL THEN 1 ELSE 0 END)
+            FROM scan_errors
+            "#,
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("query invalid UTF-8 scan errors");
+    assert_eq!(invalid_errors, 2);
+    assert_eq!(null_error_paths, 2);
+
+    assert_eq!(
+        fs::read(&first).expect("read first invalid fixture"),
+        b"first"
+    );
+    assert_eq!(
+        fs::read(&second).expect("read second invalid fixture"),
+        b"second"
+    );
+}
