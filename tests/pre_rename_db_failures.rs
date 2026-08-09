@@ -18,10 +18,8 @@ impl Sandbox {
             .duration_since(UNIX_EPOCH)
             .expect("system clock before Unix epoch")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "tidyfs-{name}-{}-{nonce}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tidyfs-{name}-{}-{nonce}", std::process::id()));
         let scan_root = root.join("scan-root");
         let db_path = root.join("state/tidyfs.db");
         let home = root.join("home");
@@ -166,7 +164,10 @@ fn moving_status_database_failure_prevents_quarantine_rename_and_recovers_termin
         "clean did not report injected transition failure: {}",
         String::from_utf8_lossy(&clean.stderr)
     );
-    assert_eq!(fs::read(&candidate).expect("source after failed transition"), payload);
+    assert_eq!(
+        fs::read(&candidate).expect("source after failed transition"),
+        payload
+    );
 
     let conn = sandbox.connection();
     let (action_id, status, quarantine_path): (i64, String, String) = conn
@@ -275,7 +276,10 @@ fn restoring_status_database_failure_preserves_quarantine_and_allows_retry() {
     );
 
     assert_success(&sandbox.run(&["restore", "--action", &action_id.to_string()]));
-    assert_eq!(fs::read(&candidate).expect("restored retry payload"), payload);
+    assert_eq!(
+        fs::read(&candidate).expect("restored retry payload"),
+        payload
+    );
     assert!(!quarantine_path.exists());
 
     let final_status: String = sandbox
