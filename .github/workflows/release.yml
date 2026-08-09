@@ -34,13 +34,23 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Verify mismatched tag fails closed
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          if RELEASE_TAG="v999.999.999" bash scripts/package-release.sh; then
+            echo "mismatched release tag unexpectedly passed validation" >&2
+            exit 1
+          fi
+
       - name: Build and verify release bundle
         shell: bash
         run: |
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             RELEASE_TAG="$GITHUB_REF_NAME" bash scripts/package-release.sh
           else
-            bash scripts/package-release.sh
+            version="$({ cargo metadata --no-deps --format-version 1; } | python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["packages"][0]["version"])')"
+            RELEASE_TAG="v${version}" bash scripts/package-release.sh
           fi
 
   release:
