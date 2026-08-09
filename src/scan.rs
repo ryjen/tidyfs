@@ -681,14 +681,12 @@ mod tests {
         let root_dev = metadata_dev(&fs::metadata(&root).expect("scan-root metadata"))
             .expect("Linux metadata has device id");
 
-        let foreign = ["/dev/shm", "/proc", "/sys"]
-            .into_iter()
-            .find(|path| {
-                fs::metadata(path)
-                    .ok()
-                    .and_then(|metadata| metadata_dev(&metadata))
-                    .is_some_and(|dev| dev != root_dev)
-            });
+        let foreign = ["/dev/shm", "/proc", "/sys"].into_iter().find(|path| {
+            fs::metadata(path)
+                .ok()
+                .and_then(|metadata| metadata_dev(&metadata))
+                .is_some_and(|dev| dev != root_dev)
+        });
         let Some(foreign) = foreign else {
             eprintln!("skipping one-filesystem test: no different-device fixture available");
             let _ = fs::remove_dir_all(root);
