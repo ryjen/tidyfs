@@ -659,3 +659,61 @@ fn metadata_inode(metadata: &fs::Metadata) -> Option<u64> {
 fn metadata_inode(_metadata: &fs::Metadata) -> Option<u64> {
     None
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::{metadata_dev, should_descend, ScanOptions};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use walkdir::WalkDir;
+
+    #[test]
+    fn one_file_system_rejects_entry_from_a_different_device() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "tidyfs-one-filesystem-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("create scan-root fixture");
+        let root_dev = metadata_dev(&fs::metadata(&root).expect("scan-root metadata"))
+            .expect("Linux metadata has device id");
+
+        let foreign = ["/dev/shm", "/proc", "/sys"]
+            .into_iter()
+            .find(|path| {
+                fs::metadata(path)
+                    .ok()
+                    .and_then(|metadata| metadata_dev(&metadata))
+                    .is_some_and(|dev| dev != root_dev)
+            });
+        let Some(foreign) = foreign else {
+            eprintln!("skipping one-filesystem test: no different-device fixture available");
+            let _ = fs::remove_dir_all(root);
+            return;
+        };
+
+        let entry = WalkDir::new(foreign)
+            .max_depth(0)
+            .into_iter()
+            .next()
+            .expect("foreign fixture entry")
+            .expect("walk foreign fixture");
+        let bounded = ScanOptions {
+            one_file_system: true,
+            include_pseudo: true,
+            jobs: Some(1),
+        };
+        let unbounded = ScanOptions {
+            one_file_system: false,
+            ..bounded
+        };
+
+        assert!(!should_descend(&entry, &root, bounded, Some(root_dev)));
+        assert!(should_descend(&entry, &root, unbounded, Some(root_dev)));
+
+        let _ = fs::remove_dir_all(root);
+    }
+}
