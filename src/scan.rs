@@ -393,12 +393,7 @@ fn record_from_path(path: &Path) -> Result<EntryRecord> {
     let name = match path.file_name() {
         Some(name) => name
             .to_str()
-            .with_context(|| {
-                format!(
-                    "non-UTF-8 filesystem name is unsupported: {:?}",
-                    name
-                )
-            })?
+            .with_context(|| format!("non-UTF-8 filesystem name is unsupported: {:?}", name))?
             .to_string(),
         None => path_text(&path)?.to_string(),
     };
@@ -481,11 +476,7 @@ fn aggregate_record(
 
 fn insert_entry(tx: &Transaction<'_>, scan_id: i64, record: &EntryRecord) -> Result<()> {
     let path = path_text(&record.path)?;
-    let parent_path = record
-        .parent_path
-        .as_deref()
-        .map(path_text)
-        .transpose()?;
+    let parent_path = record.parent_path.as_deref().map(path_text).transpose()?;
     let symlink_target = record
         .symlink_target
         .as_deref()
