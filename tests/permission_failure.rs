@@ -120,9 +120,7 @@ fn quarantine_permission_failure_preserves_source_and_records_failed_action() {
             fs::remove_dir(&permission_probe).expect("remove permission probe");
             fs::set_permissions(&quarantine_root, fs::Permissions::from_mode(0o755))
                 .expect("restore quarantine permissions after capability probe");
-            eprintln!(
-                "skipping permission failure test: process can write through mode 0555"
-            );
+            eprintln!("skipping permission failure test: process can write through mode 0555");
             return;
         }
         Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {}
