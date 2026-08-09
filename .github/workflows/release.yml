@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/package-release.sh
+      - Cargo.toml
+      - Cargo.lock
+      - src/**
+      - rules/**
+      - README.md
+      - LICENSE-MIT
+      - LICENSE-APACHE
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TARGET: x86_64-unknown-linux-gnu
+  RELEASE_ARTIFACT_NAME: tidyfs-linux-release-assets
+
+jobs:
+  verify:
+    name: Verify Linux release bundle
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify mismatched tag fails closed
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          if RELEASE_TAG="v999.999.999" bash scripts/package-release.sh; then
+            echo "mismatched release tag unexpectedly passed validation" >&2
+            exit 1
+          fi
+
+      - name: Build and verify release bundle
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            RELEASE_TAG="$GITHUB_REF_NAME" bash scripts/package-release.sh
+          else
+            version="$({ cargo metadata --no-deps --format-version 1; } | python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["packages"][0]["version"])')"
+            RELEASE_TAG="v${version}" bash scripts/package-release.sh
+          fi
+
+      - name: Upload verified release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.RELEASE_ARTIFACT_NAME }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.RELEASE_ARTIFACT_NAME }}
+          path: dist
+
+      - name: Verify handed-off checksum
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bundle="tidyfs-${version}-${RELEASE_TARGET}"
+          test -f "dist/${bundle}.tar.gz"
+          test -f "dist/${bundle}.tar.gz.sha256"
+          (
+            cd dist
+            sha256sum --check "${bundle}.tar.gz.sha256"
+          )
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bundle="tidyfs-${version}-${RELEASE_TARGET}"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/${bundle}.tar.gz" \
+            "dist/${bundle}.tar.gz.sha256" \
+            --verify-tag \
+            --generate-notes \
+            --title "tidyfs $GITHUB_REF_NAME"
