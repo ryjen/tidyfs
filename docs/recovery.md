@@ -111,6 +111,8 @@ A crash or database failure after step 6 can leave `moving` while the payload al
 
 Ordinary failures before the rename leave the source untouched and record a terminal `failed` action when an action row already exists. Permission failures while preparing the quarantine directory are covered by integration tests.
 
+The current cleanup path still has a residual source-substitution TOCTOU window between the one-time preflight identity check and the later fingerprint/rename. A replacement after fingerprinting is detected by the post-move payload verification, but the replacement may already have been moved into quarantine. This is treated as a remaining hardening gap rather than a protection guaranteed by the current preflight.
+
 ## Restore transition
 
 Restore requires an action in `quarantined` state and refuses an already-present original destination.
@@ -148,8 +150,8 @@ The recovery model protects against:
 - machine restart or power loss during cleanup or restore transitions;
 - SQLite write failure after a successful filesystem rename;
 - ordinary rename and permission failures;
-- stale or replaced source paths between scan and cleanup;
-- symlink candidates and symlink substitution at the selected cleanup path;
+- stale source paths detected by device/inode preflight before cleanup begins;
+- symlink candidates detected by the cleanup preflight;
 - concurrent cooperating `tidyfs` mutation commands through a database-scoped advisory lock;
 - external writers racing restore destination creation on Linux through atomic no-replace rename;
 - quarantined or restored payload substitution detected through deterministic SHA-256 identity verification;
@@ -164,6 +166,7 @@ The model assumes:
 
 ## Current limitations
 
+- Cleanup still has a residual TOCTOU window for source or symlink substitution after preflight and before the rename; post-move identity verification detects mismatches but cannot prevent the substituted path from having already moved.
 - Restore's atomic no-overwrite implementation is Linux-only; unsupported platforms fail closed.
 - Cross-filesystem quarantine and restore are intentionally unsupported rather than implemented as copy/delete.
 - Recovery updates durable state but does not automatically move files back to a preferred side of an ambiguous transition.
