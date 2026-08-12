@@ -108,9 +108,7 @@ pub fn run_analyze(database: &Database, query: AnalyzeQuery) -> Result<()> {
 
 fn validate_query(query: &AnalyzeQuery) -> Result<()> {
     if query.limit == 0 || query.limit > MAX_ANALYZE_CANDIDATES {
-        bail!(
-            "analyze --limit must be between 1 and {MAX_ANALYZE_CANDIDATES}"
-        );
+        bail!("analyze --limit must be between 1 and {MAX_ANALYZE_CANDIDATES}");
     }
     if query.connect_timeout_ms == 0 || query.timeout_ms == 0 {
         bail!("AI gateway timeouts must be greater than zero");
@@ -189,7 +187,10 @@ fn observation_for(
 ) -> AiObservation {
     let path = privacy_path(&candidate.path, path_mode);
     let classification = candidate.labels.first().cloned();
-    let protected = candidate.labels.iter().any(|label| is_protected_label(label));
+    let protected = candidate
+        .labels
+        .iter()
+        .any(|label| is_protected_label(label));
     let age_seconds = candidate.max_mtime.and_then(|mtime| {
         let age = util::unix_now().saturating_sub(mtime);
         (age >= 0).then_some(age as u64)
@@ -246,11 +247,10 @@ fn redact_path(path: &Path) -> String {
             if marker == ".cache" {
                 let mut parts = suffix.split('/');
                 let first = parts.next().unwrap_or(".cache");
-                return parts
-                    .next()
-                    .map_or_else(|| format!("<redacted>/{first}"), |child| {
-                        format!("<redacted>/{first}/{child}")
-                    });
+                return parts.next().map_or_else(
+                    || format!("<redacted>/{first}"),
+                    |child| format!("<redacted>/{first}/{child}"),
+                );
             }
             return format!("<redacted>/{marker}");
         }
@@ -287,7 +287,10 @@ fn print_proposal(index: usize, request: &AiAnalysisRequest, proposal: &AiCleanu
     println!("candidate {index}:");
     println!("  key: {}", request.observation.candidate_key);
     println!("  path: {}", request.observation.path);
-    println!("  size: {}", util::format_bytes(request.observation.size_bytes));
+    println!(
+        "  size: {}",
+        util::format_bytes(request.observation.size_bytes)
+    );
     println!("  observation: {}", request.observation_digest);
     println!("  classification: {}", proposal.classification);
     println!("  confidence: {:.3}", proposal.confidence);
@@ -346,7 +349,9 @@ mod tests {
     #[test]
     fn redaction_preserves_known_structure_without_user_prefix() {
         assert_eq!(
-            redact_path(Path::new("/home/alice/work/private/.gradle/caches/modules-2")),
+            redact_path(Path::new(
+                "/home/alice/work/private/.gradle/caches/modules-2"
+            )),
             "<redacted>/.gradle/caches"
         );
         assert_eq!(
