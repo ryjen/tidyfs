@@ -1,17 +1,27 @@
 use crate::ai::{AiCleanupProposal, AiProposalValidationError};
+use crate::ai_contract::AiObservation;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiAnalysisRequest {
-    pub candidate_key: String,
-    pub path: String,
-    pub size_bytes: u64,
-    pub age_seconds: Option<u64>,
-    pub deterministic_classification: Option<String>,
-    pub matched_rule: Option<String>,
-    pub adapter: Option<String>,
+    pub observation: AiObservation,
+    pub observation_digest: String,
+}
+
+impl AiAnalysisRequest {
+    pub fn new(observation: AiObservation) -> Self {
+        let observation_digest = observation.digest();
+        Self {
+            observation,
+            observation_digest,
+        }
+    }
+
+    pub fn observation_is_bound(&self) -> bool {
+        self.observation_digest == self.observation.digest()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +47,7 @@ impl Error for AiProviderError {}
 pub enum AiAnalysisError {
     Provider(AiProviderError),
     InvalidProposal(AiProposalValidationError),
+    ObservationDigestMismatch,
 }
 
 impl fmt::Display for AiAnalysisError {
@@ -44,6 +55,12 @@ impl fmt::Display for AiAnalysisError {
         match self {
             Self::Provider(error) => error.fmt(f),
             Self::InvalidProposal(error) => write!(f, "AI proposal rejected: {error}"),
+            Self::ObservationDigestMismatch => {
+                write!(
+                    f,
+                    "AI analysis request observation digest is stale or invalid"
+                )
+            }
         }
     }
 }
@@ -58,6 +75,10 @@ pub fn analyze_validated<P: AiAnalysisProvider>(
     provider: &P,
     request: &AiAnalysisRequest,
 ) -> Result<AiCleanupProposal, AiAnalysisError> {
+    if !request.observation_is_bound() {
+        return Err(AiAnalysisError::ObservationDigestMismatch);
+    }
+
     let proposal = provider
         .analyze(request)
         .map_err(AiAnalysisError::Provider)?;
@@ -71,6 +92,7 @@ pub fn analyze_validated<P: AiAnalysisProvider>(
 mod tests {
     use super::*;
     use crate::ai::{AiProvenance, AiRecommendedAction, AiRisk, AI_PROPOSAL_SCHEMA_VERSION};
+    use crate::ai_contract::{AiDeterministicFacts, AiPathMode};
 
     #[derive(Clone)]
     struct FakeProvider {
@@ -87,15 +109,22 @@ mod tests {
     }
 
     fn request() -> AiAnalysisRequest {
-        AiAnalysisRequest {
+        AiAnalysisRequest::new(AiObservation {
+            scan_id: 42,
             candidate_key: "scan-42:candidate-7".to_owned(),
             path: "/home/user/.cache/example".to_owned(),
+            path_mode: AiPathMode::Full,
             size_bytes: 46 * 1024 * 1024 * 1024,
             age_seconds: Some(3600),
-            deterministic_classification: Some("cache".to_owned()),
-            matched_rule: None,
+            labels: vec!["cache".to_owned()],
+            deterministic: AiDeterministicFacts {
+                classification: Some("cache".to_owned()),
+                matched_rule: None,
+                protected: false,
+                max_allowed_risk: "medium".to_owned(),
+            },
             adapter: None,
-        }
+        })
     }
 
     fn valid_proposal() -> AiCleanupProposal {
@@ -123,6 +152,20 @@ mod tests {
         };
 
         assert_eq!(analyze_validated(&provider, &request()), Ok(expected));
+    }
+
+    #[test]
+    fn rejects_request_if_observation_changes_after_binding() {
+        let provider = FakeProvider {
+            result: Ok(valid_proposal()),
+        };
+        let mut request = request();
+        request.observation.size_bytes += 1;
+
+        assert_eq!(
+            analyze_validated(&provider, &request),
+            Err(AiAnalysisError::ObservationDigestMismatch)
+        );
     }
 
     #[test]
