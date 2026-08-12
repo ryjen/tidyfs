@@ -3,6 +3,11 @@ use std::error::Error;
 use std::fmt;
 
 pub const AI_PROPOSAL_SCHEMA_VERSION: u32 = 1;
+pub const AI_MAX_CLASSIFICATION_BYTES: usize = 256;
+pub const AI_MAX_RATIONALE_ITEMS: usize = 16;
+pub const AI_MAX_CAVEAT_ITEMS: usize = 16;
+pub const AI_MAX_EXPLANATION_ITEM_BYTES: usize = 1024;
+pub const AI_MAX_PROVENANCE_FIELD_BYTES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,10 +51,16 @@ pub struct AiCleanupProposal {
 pub enum AiProposalValidationError {
     UnsupportedSchemaVersion(u32),
     EmptyClassification,
+    ClassificationTooLong,
     InvalidConfidence,
     MissingRationale,
+    TooManyRationaleItems,
+    RationaleItemTooLong,
+    TooManyCaveatItems,
+    CaveatItemTooLong,
     EmptyProvider,
     EmptyModel,
+    ProvenanceFieldTooLong,
 }
 
 impl fmt::Display for AiProposalValidationError {
@@ -59,6 +70,10 @@ impl fmt::Display for AiProposalValidationError {
                 write!(f, "unsupported AI proposal schema version: {version}")
             }
             Self::EmptyClassification => write!(f, "AI proposal classification must not be empty"),
+            Self::ClassificationTooLong => write!(
+                f,
+                "AI proposal classification exceeds {AI_MAX_CLASSIFICATION_BYTES} bytes"
+            ),
             Self::InvalidConfidence => {
                 write!(f, "AI proposal confidence must be finite and in 0.0..=1.0")
             }
@@ -66,8 +81,27 @@ impl fmt::Display for AiProposalValidationError {
                 f,
                 "AI proposal must include at least one non-empty rationale item"
             ),
+            Self::TooManyRationaleItems => write!(
+                f,
+                "AI proposal exceeds {AI_MAX_RATIONALE_ITEMS} rationale items"
+            ),
+            Self::RationaleItemTooLong => write!(
+                f,
+                "AI proposal rationale item exceeds {AI_MAX_EXPLANATION_ITEM_BYTES} bytes"
+            ),
+            Self::TooManyCaveatItems => {
+                write!(f, "AI proposal exceeds {AI_MAX_CAVEAT_ITEMS} caveat items")
+            }
+            Self::CaveatItemTooLong => write!(
+                f,
+                "AI proposal caveat item exceeds {AI_MAX_EXPLANATION_ITEM_BYTES} bytes"
+            ),
             Self::EmptyProvider => write!(f, "AI proposal provenance provider must not be empty"),
             Self::EmptyModel => write!(f, "AI proposal provenance model must not be empty"),
+            Self::ProvenanceFieldTooLong => write!(
+                f,
+                "AI proposal provenance field exceeds {AI_MAX_PROVENANCE_FIELD_BYTES} bytes"
+            ),
         }
     }
 }
@@ -85,6 +119,9 @@ impl AiCleanupProposal {
         if self.classification.trim().is_empty() {
             return Err(AiProposalValidationError::EmptyClassification);
         }
+        if self.classification.len() > AI_MAX_CLASSIFICATION_BYTES {
+            return Err(AiProposalValidationError::ClassificationTooLong);
+        }
 
         if !self.confidence.is_finite() || !(0.0..=1.0).contains(&self.confidence) {
             return Err(AiProposalValidationError::InvalidConfidence);
@@ -93,6 +130,27 @@ impl AiCleanupProposal {
         if self.rationale.is_empty() || self.rationale.iter().any(|item| item.trim().is_empty()) {
             return Err(AiProposalValidationError::MissingRationale);
         }
+        if self.rationale.len() > AI_MAX_RATIONALE_ITEMS {
+            return Err(AiProposalValidationError::TooManyRationaleItems);
+        }
+        if self
+            .rationale
+            .iter()
+            .any(|item| item.len() > AI_MAX_EXPLANATION_ITEM_BYTES)
+        {
+            return Err(AiProposalValidationError::RationaleItemTooLong);
+        }
+
+        if self.caveats.len() > AI_MAX_CAVEAT_ITEMS {
+            return Err(AiProposalValidationError::TooManyCaveatItems);
+        }
+        if self
+            .caveats
+            .iter()
+            .any(|item| item.len() > AI_MAX_EXPLANATION_ITEM_BYTES)
+        {
+            return Err(AiProposalValidationError::CaveatItemTooLong);
+        }
 
         if self.provenance.provider.trim().is_empty() {
             return Err(AiProposalValidationError::EmptyProvider);
@@ -100,6 +158,17 @@ impl AiCleanupProposal {
 
         if self.provenance.model.trim().is_empty() {
             return Err(AiProposalValidationError::EmptyModel);
+        }
+
+        if self.provenance.provider.len() > AI_MAX_PROVENANCE_FIELD_BYTES
+            || self.provenance.model.len() > AI_MAX_PROVENANCE_FIELD_BYTES
+            || self
+                .provenance
+                .request_id
+                .as_ref()
+                .is_some_and(|value| value.len() > AI_MAX_PROVENANCE_FIELD_BYTES)
+        {
+            return Err(AiProposalValidationError::ProvenanceFieldTooLong);
         }
 
         Ok(())
@@ -171,6 +240,44 @@ mod tests {
         assert_eq!(
             proposal.validate(),
             Err(AiProposalValidationError::EmptyProvider)
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_model_controlled_text() {
+        let mut proposal = valid_proposal();
+        proposal.classification = "x".repeat(AI_MAX_CLASSIFICATION_BYTES + 1);
+        assert_eq!(
+            proposal.validate(),
+            Err(AiProposalValidationError::ClassificationTooLong)
+        );
+
+        let mut proposal = valid_proposal();
+        proposal.rationale = vec!["safe".to_owned(); AI_MAX_RATIONALE_ITEMS + 1];
+        assert_eq!(
+            proposal.validate(),
+            Err(AiProposalValidationError::TooManyRationaleItems)
+        );
+
+        let mut proposal = valid_proposal();
+        proposal.rationale = vec!["x".repeat(AI_MAX_EXPLANATION_ITEM_BYTES + 1)];
+        assert_eq!(
+            proposal.validate(),
+            Err(AiProposalValidationError::RationaleItemTooLong)
+        );
+
+        let mut proposal = valid_proposal();
+        proposal.caveats = vec!["x".to_owned(); AI_MAX_CAVEAT_ITEMS + 1];
+        assert_eq!(
+            proposal.validate(),
+            Err(AiProposalValidationError::TooManyCaveatItems)
+        );
+
+        let mut proposal = valid_proposal();
+        proposal.provenance.model = "x".repeat(AI_MAX_PROVENANCE_FIELD_BYTES + 1);
+        assert_eq!(
+            proposal.validate(),
+            Err(AiProposalValidationError::ProvenanceFieldTooLong)
         );
     }
 

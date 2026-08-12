@@ -1,5 +1,6 @@
 mod actions;
 mod adapters;
+mod analyze;
 mod classify;
 mod clean;
 mod db;
@@ -16,6 +17,7 @@ mod util;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+use tidyfs::ai_contract::AiPathMode;
 
 #[derive(Debug, Parser)]
 #[command(name = "tidyfs")]
@@ -58,6 +60,45 @@ enum Command {
         /// Print classification counts by label.
         #[arg(long)]
         summary: bool,
+    },
+
+    /// Ask a local AI gateway for bounded, non-mutating analysis of classified scan facts.
+    Analyze {
+        /// Explicit numeric loopback gateway endpoint, for example http://127.0.0.1:8000.
+        #[arg(long)]
+        endpoint: String,
+
+        /// Scan id to analyze. Defaults to latest completed scan.
+        #[arg(long)]
+        scan_id: Option<i64>,
+
+        /// Restrict analysis to a subtree of the selected scan.
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// Maximum number of classified paths to send for analysis (1..=100).
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+
+        /// Path disclosure mode for facts sent to inference.
+        #[arg(long, value_enum, default_value_t = CliAiPathMode::Full)]
+        path_mode: CliAiPathMode,
+
+        /// Deterministic maximum-risk context supplied to the model.
+        #[arg(long, value_enum, default_value_t = CliRisk::Low)]
+        risk: CliRisk,
+
+        /// Gateway connection timeout in milliseconds.
+        #[arg(long, default_value_t = 3000)]
+        connect_timeout_ms: u64,
+
+        /// Gateway read/write timeout in milliseconds.
+        #[arg(long, default_value_t = 15000)]
+        timeout_ms: u64,
+
+        /// Maximum accepted gateway response body size in bytes.
+        #[arg(long, default_value_t = 65536)]
+        max_response_bytes: usize,
     },
 
     /// Show largest indexed directories from the latest scan by default.
@@ -196,6 +237,13 @@ enum CliRisk {
     Forbidden,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliAiPathMode {
+    Full,
+    Basename,
+    Redacted,
+}
+
 impl From<CliRisk> for rules::Risk {
     fn from(value: CliRisk) -> Self {
         match value {
@@ -203,6 +251,16 @@ impl From<CliRisk> for rules::Risk {
             CliRisk::Medium => rules::Risk::Medium,
             CliRisk::High => rules::Risk::High,
             CliRisk::Forbidden => rules::Risk::Forbidden,
+        }
+    }
+}
+
+impl From<CliAiPathMode> for AiPathMode {
+    fn from(value: CliAiPathMode) -> Self {
+        match value {
+            CliAiPathMode::Full => AiPathMode::Full,
+            CliAiPathMode::Basename => AiPathMode::Basename,
+            CliAiPathMode::Redacted => AiPathMode::Redacted,
         }
     }
 }
@@ -248,6 +306,32 @@ fn main() -> Result<()> {
             if summary {
                 classify::print_classification_summary(&database, scan_id)?;
             }
+        }
+        Command::Analyze {
+            endpoint,
+            scan_id,
+            root,
+            limit,
+            path_mode,
+            risk,
+            connect_timeout_ms,
+            timeout_ms,
+            max_response_bytes,
+        } => {
+            analyze::run_analyze(
+                &database,
+                analyze::AnalyzeQuery {
+                    endpoint,
+                    scan_id,
+                    root,
+                    limit,
+                    path_mode: path_mode.into(),
+                    max_risk: risk.into(),
+                    connect_timeout_ms,
+                    timeout_ms,
+                    max_response_bytes,
+                },
+            )?;
         }
         Command::Top {
             scan_id,
