@@ -4,9 +4,7 @@ use crate::rules::{self, Risk};
 use anyhow::{Context, Result};
 use rusqlite::{params, OptionalExtension, Transaction};
 use std::path::{Path, PathBuf};
-use tidyfs::ai::{
-    AiCleanupProposal, AiProvenance, AiRecommendedAction, AiRisk, AI_PROPOSAL_SCHEMA_VERSION,
-};
+use tidyfs::ai::{AiCleanupProposal, AiProvenance, AiRecommendedAction, AiRisk};
 use tidyfs::ai_contract::AiPathMode;
 use tidyfs::ai_provider::{analyze_validated, AiAnalysisProvider, AiAnalysisRequest};
 
@@ -98,7 +96,7 @@ pub fn conservative_policy(
         };
     }
 
-    if !reversible || !matches!(action_type, "quarantine" | "trash") {
+    if !reversible || action_type != "quarantine" {
         return AiPolicyResult {
             risk: effective_risk,
             blocked: true,
@@ -303,23 +301,18 @@ pub fn stored_evidence_is_fresh(
     scan_id: i64,
     evidence: &StoredAiEvidence,
 ) -> Result<bool> {
-    match ai_facts::reconstruct_bound_observation(
-        database,
+    let Some(candidate) = ai_facts::load_candidate(database, scan_id, &evidence.evidence.path)? else {
+        return Ok(false);
+    };
+    let observation = ai_facts::observation_for(
         scan_id,
-        &evidence.evidence.path,
+        &candidate,
         evidence.evidence.path_mode,
         evidence.evidence.max_risk,
-        &evidence.evidence.observation_digest,
-    ) {
-        Ok(observation) => Ok(observation.candidate_key == evidence.evidence.candidate_key),
-        Err(error) => {
-            if error.to_string().starts_with("AI recommendation is stale:") {
-                Ok(false)
-            } else {
-                Err(error)
-            }
-        }
-    }
+    );
+
+    Ok(observation.digest() == evidence.evidence.observation_digest
+        && observation.candidate_key == evidence.evidence.candidate_key)
 }
 
 pub fn ai_risk_name(risk: AiRisk) -> &'static str {
@@ -394,6 +387,9 @@ fn parse_action(value: &str) -> Result<AiRecommendedAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tidyfs::ai::AI_PROPOSAL_SCHEMA_VERSION;
 
     fn proposal(risk: AiRisk, action: AiRecommendedAction, confidence: f32) -> AiCleanupProposal {
         AiCleanupProposal {
@@ -409,6 +405,71 @@ mod tests {
                 model: "test-model".to_owned(),
                 request_id: Some("req-1".to_owned()),
             },
+        }
+    }
+
+    fn temporary_database_path() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "tidyfs-ai-planning-{}-{nonce}.db",
+            std::process::id()
+        ))
+    }
+
+    fn seeded_database() -> (Database, PathBuf) {
+        let path = temporary_database_path();
+        let database = Database::open(&path).expect("open test database");
+        database.migrate().expect("migrate test database");
+        database
+            .connection()
+            .execute_batch(
+                r#"
+                INSERT INTO scans(
+                  id, root_path, started_at, finished_at, status,
+                  one_file_system, include_pseudo
+                ) VALUES (42, '/tmp/tidyfs-ai-root', 1000, 2000, 'completed', 0, 0);
+
+                INSERT INTO entries(
+                  id, scan_id, path, parent_path, name, entry_type,
+                  size_bytes, allocated_size_bytes, mtime
+                ) VALUES (
+                  7, 42, '/tmp/tidyfs-ai-root/.cache', '/tmp/tidyfs-ai-root',
+                  '.cache', 'dir', 1024, 1024, 1000
+                );
+
+                INSERT INTO classifications(
+                  id, scan_id, path, label, confidence, source, reason
+                ) VALUES (
+                  1, 42, '/tmp/tidyfs-ai-root/.cache', 'cache', 1.0, 'test', 'test'
+                );
+                "#,
+            )
+            .expect("seed AI facts");
+        (database, path)
+    }
+
+    fn stored_from_current(database: &Database) -> StoredAiEvidence {
+        let candidate = ai_facts::load_candidate(
+            database,
+            42,
+            Path::new("/tmp/tidyfs-ai-root/.cache"),
+        )
+        .expect("load candidate")
+        .expect("candidate exists");
+        let observation = ai_facts::observation_for(42, &candidate, AiPathMode::Redacted, Risk::Low);
+        StoredAiEvidence {
+            evidence: AiEvidence {
+                path: candidate.path,
+                candidate_key: observation.candidate_key,
+                path_mode: AiPathMode::Redacted,
+                max_risk: Risk::Low,
+                observation_digest: observation.digest(),
+                proposal: proposal(AiRisk::Low, AiRecommendedAction::Quarantine, 0.99),
+            },
+            created_at: 2000,
         }
     }
 
@@ -467,9 +528,9 @@ mod tests {
     }
 
     #[test]
-    fn ai_never_converts_report_only_or_tool_native_to_mutation() {
+    fn ai_never_converts_non_quarantine_actions_to_mutation() {
         let proposal = proposal(AiRisk::Low, AiRecommendedAction::Quarantine, 0.99);
-        for action_type in ["report_only", "tool_native"] {
+        for action_type in ["report_only", "tool_native", "trash"] {
             let decision = conservative_policy(
                 Risk::Low,
                 action_type,
@@ -496,5 +557,43 @@ mod tests {
         );
         assert_eq!(decision.risk, Risk::High);
         assert!(decision.blocked);
+    }
+
+    #[test]
+    fn stored_evidence_survives_reclassification_but_not_fact_changes() {
+        let (database, path) = seeded_database();
+        let stored = stored_from_current(&database);
+        assert!(stored_evidence_is_fresh(&database, 42, &stored).expect("fresh evidence"));
+
+        database
+            .connection()
+            .execute("DELETE FROM classifications WHERE scan_id = 42", [])
+            .expect("delete classifications");
+        database
+            .connection()
+            .execute(
+                r#"
+                INSERT INTO classifications(
+                  id, scan_id, path, label, confidence, source, reason
+                ) VALUES (?1, 42, '/tmp/tidyfs-ai-root/.cache', 'cache', 1.0, 'test', 'test')
+                "#,
+                params![99_i64],
+            )
+            .expect("reclassify same facts");
+        assert!(stored_evidence_is_fresh(&database, 42, &stored).expect("same facts stay fresh"));
+
+        database
+            .connection()
+            .execute(
+                "UPDATE entries SET size_bytes = 2048, allocated_size_bytes = 2048 WHERE id = 7",
+                [],
+            )
+            .expect("change authoritative size");
+        assert!(!stored_evidence_is_fresh(&database, 42, &stored).expect("changed facts stale"));
+
+        drop(database);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("db-wal"));
+        let _ = fs::remove_file(path.with_extension("db-shm"));
     }
 }
