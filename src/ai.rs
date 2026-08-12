@@ -57,8 +57,13 @@ impl fmt::Display for AiProposalValidationError {
                 write!(f, "unsupported AI proposal schema version: {version}")
             }
             Self::EmptyClassification => write!(f, "AI proposal classification must not be empty"),
-            Self::InvalidConfidence => write!(f, "AI proposal confidence must be finite and in 0.0..=1.0"),
-            Self::MissingRationale => write!(f, "AI proposal must include at least one non-empty rationale item"),
+            Self::InvalidConfidence => {
+                write!(f, "AI proposal confidence must be finite and in 0.0..=1.0")
+            }
+            Self::MissingRationale => write!(
+                f,
+                "AI proposal must include at least one non-empty rationale item"
+            ),
             Self::EmptyProvider => write!(f, "AI proposal provenance provider must not be empty"),
             Self::EmptyModel => write!(f, "AI proposal provenance model must not be empty"),
         }
