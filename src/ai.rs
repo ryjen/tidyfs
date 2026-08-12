@@ -21,6 +21,7 @@ pub enum AiRecommendedAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AiProvenance {
     pub provider: String,
     pub model: String,
@@ -28,6 +29,7 @@ pub struct AiProvenance {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AiCleanupProposal {
     pub schema_version: u32,
     pub classification: String,
@@ -173,23 +175,41 @@ mod tests {
     }
 
     #[test]
-    fn rejects_destructive_action_from_serialized_model_output() {
+    fn serialized_delete_action_is_rejected() {
         let yaml = r#"
 schema_version: 1
-classification: regenerable_build_cache
-confidence: 0.86
-rationale:
-  - matches a known build-cache layout
+classification: cache
+confidence: 0.9
+rationale: [safe]
+caveats: []
 risk: medium
 recommended_action: delete
 provenance:
-  provider: supervisor-gateway
-  model: filesystem-specialist
-  request_id: req-123
+  provider: test
+  model: test
+  request_id: null
 "#;
 
-        let result = serde_yaml::from_str::<AiCleanupProposal>(yaml);
+        assert!(serde_yaml::from_str::<AiCleanupProposal>(yaml).is_err());
+    }
 
-        assert!(result.is_err());
+    #[test]
+    fn unknown_serialized_fields_are_rejected() {
+        let yaml = r#"
+schema_version: 1
+classification: cache
+confidence: 0.9
+rationale: [safe]
+caveats: []
+risk: medium
+recommended_action: review
+unexpected: true
+provenance:
+  provider: test
+  model: test
+  request_id: null
+"#;
+
+        assert!(serde_yaml::from_str::<AiCleanupProposal>(yaml).is_err());
     }
 }
