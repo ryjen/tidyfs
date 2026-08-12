@@ -512,3 +512,192 @@ fn print_candidate(c: &PlannedCandidate) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clean::{run_clean, CleanQuery};
+    use std::fs;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tidyfs::ai_contract::AiTransportRequest;
+
+    fn temporary_base() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "tidyfs-ai-plan-dry-run-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn ai_review_blocks_plan_and_dry_run_does_not_mutate() {
+        let base = temporary_base();
+        let root = base.join("workspace");
+        let candidate_path = root.join("__pycache__");
+        fs::create_dir_all(&candidate_path).expect("create candidate directory");
+
+        let db_path = base.join("tidyfs.db");
+        let mut database = Database::open(&db_path).expect("open test database");
+        database.migrate().expect("migrate test database");
+        database
+            .connection()
+            .execute(
+                r#"
+                INSERT INTO scans(
+                  id, root_path, started_at, finished_at, status,
+                  one_file_system, include_pseudo
+                ) VALUES (?1, ?2, 1000, 2000, 'completed', 0, 0)
+                "#,
+                params![42_i64, root.to_string_lossy().to_string()],
+            )
+            .expect("insert scan");
+        database
+            .connection()
+            .execute(
+                r#"
+                INSERT INTO entries(
+                  id, scan_id, path, parent_path, name, entry_type,
+                  size_bytes, allocated_size_bytes, mtime
+                ) VALUES (?1, 42, ?2, ?3, '__pycache__', 'dir', 1024, 1024, 1000)
+                "#,
+                params![
+                    7_i64,
+                    candidate_path.to_string_lossy().to_string(),
+                    root.to_string_lossy().to_string()
+                ],
+            )
+            .expect("insert entry");
+        database
+            .connection()
+            .execute(
+                r#"
+                INSERT INTO classifications(
+                  id, scan_id, path, label, confidence, source, reason
+                ) VALUES (1, 42, ?1, 'python_bytecode_cache', 1.0, 'test', 'test')
+                "#,
+                params![candidate_path.to_string_lossy().to_string()],
+            )
+            .expect("insert classification");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake gateway");
+        let address = listener.local_addr().expect("gateway address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let body = read_http_body(&mut stream);
+            let request: AiTransportRequest =
+                serde_json::from_slice(&body).expect("parse transport request");
+            let request_id = request.request_id.clone();
+            let digest = request.candidate.observation.digest.clone();
+            let response = serde_json::json!({
+                "contract_version": 1,
+                "request_id": request_id,
+                "proposal": {
+                    "schema_version": 1,
+                    "classification": "generated_python_cache",
+                    "confidence": 0.99,
+                    "rationale": ["review requested by specialist"],
+                    "caveats": [],
+                    "risk": "low",
+                    "recommended_action": "review",
+                    "provenance": {
+                        "provider": "fake",
+                        "model": "test",
+                        "request_id": request_id
+                    }
+                },
+                "observation": { "digest": digest }
+            });
+            let response = serde_json::to_vec(&response).expect("serialize response");
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.len()
+            );
+            stream.write_all(headers.as_bytes()).expect("write headers");
+            stream.write_all(&response).expect("write response");
+        });
+
+        run_plan(
+            &mut database,
+            PlanQuery {
+                scan_id: Some(42),
+                max_risk: Risk::Low,
+                root: None,
+                include_blocked: true,
+                include_adapters: false,
+                limit: 10,
+                ai_endpoint: Some(format!("http://{address}")),
+                ai_path_mode: AiPathMode::Redacted,
+                ai_limit: 1,
+            },
+        )
+        .expect("AI-enriched plan");
+        server.join().expect("fake gateway thread");
+
+        let (blocked, reason): (i64, Option<String>) = database
+            .connection()
+            .query_row(
+                "SELECT blocked, blocked_reason FROM cleanup_candidates WHERE scan_id = 42 AND path = ?1",
+                params![candidate_path.to_string_lossy().to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("planned candidate");
+        assert_eq!(blocked, 1);
+        assert_eq!(reason.as_deref(), Some("AI advisory requires review"));
+
+        run_clean(
+            &database,
+            CleanQuery {
+                scan_id: Some(42),
+                dry_run: true,
+                safe: true,
+                interactive: false,
+                max_risk: Risk::Low,
+                root: None,
+                limit: 10,
+            },
+        )
+        .expect("dry-run clean");
+
+        assert!(candidate_path.is_dir());
+        let action_count: i64 = database
+            .connection()
+            .query_row("SELECT COUNT(*) FROM actions", [], |row| row.get(0))
+            .expect("action count");
+        assert_eq!(action_count, 0);
+
+        drop(database);
+        fs::remove_dir_all(base).expect("remove test data");
+    }
+
+    fn read_http_body(stream: &mut TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let read = stream.read(&mut buffer).expect("read request");
+            assert!(read > 0, "request closed before body was complete");
+            request.extend_from_slice(&buffer[..read]);
+            if let Some(boundary) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                let headers = std::str::from_utf8(&request[..boundary]).expect("request headers");
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .expect("content length");
+                let start = boundary + 4;
+                if request.len() >= start + length {
+                    return request[start..start + length].to_vec();
+                }
+            }
+        }
+    }
+}
