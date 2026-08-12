@@ -137,6 +137,34 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_cleanup_candidates_scan_size
               ON cleanup_candidates(scan_id, size_bytes DESC);
 
+            CREATE TABLE IF NOT EXISTS ai_recommendations (
+              id INTEGER PRIMARY KEY,
+              scan_id INTEGER NOT NULL,
+              path TEXT NOT NULL,
+              candidate_key TEXT NOT NULL,
+              path_mode TEXT NOT NULL,
+              max_allowed_risk TEXT NOT NULL,
+              observation_digest TEXT NOT NULL,
+              schema_version INTEGER NOT NULL,
+              classification TEXT NOT NULL,
+              confidence REAL NOT NULL,
+              risk TEXT NOT NULL,
+              recommended_action TEXT NOT NULL,
+              rationale_json TEXT NOT NULL,
+              caveats_json TEXT NOT NULL,
+              provider TEXT NOT NULL,
+              model TEXT NOT NULL,
+              request_id TEXT,
+              created_at INTEGER NOT NULL,
+              FOREIGN KEY(scan_id) REFERENCES scans(id)
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_recommendations_scan_path
+              ON ai_recommendations(scan_id, path);
+
+            CREATE INDEX IF NOT EXISTS idx_ai_recommendations_scan_created
+              ON ai_recommendations(scan_id, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS actions (
               id INTEGER PRIMARY KEY,
               timestamp INTEGER NOT NULL,
