@@ -5,10 +5,13 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiAnalysisRequest {
+    pub scan_id: i64,
     pub candidate_key: String,
+    pub observation_digest: String,
     pub path: String,
     pub size_bytes: u64,
     pub age_seconds: Option<u64>,
+    pub labels: Vec<String>,
     pub deterministic_classification: Option<String>,
     pub matched_rule: Option<String>,
     pub adapter: Option<String>,
@@ -88,10 +91,13 @@ mod tests {
 
     fn request() -> AiAnalysisRequest {
         AiAnalysisRequest {
+            scan_id: 42,
             candidate_key: "scan-42:candidate-7".to_owned(),
+            observation_digest: "sha256:example".to_owned(),
             path: "/home/user/.cache/example".to_owned(),
             size_bytes: 46 * 1024 * 1024 * 1024,
             age_seconds: Some(3600),
+            labels: vec!["cache".to_owned()],
             deterministic_classification: Some("cache".to_owned()),
             matched_rule: None,
             adapter: None,
