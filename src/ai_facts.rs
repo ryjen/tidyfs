@@ -1,6 +1,5 @@
 use crate::db::Database;
 use crate::rules::Risk;
-use crate::util;
 use anyhow::{bail, Result};
 use rusqlite::params;
 use std::collections::BTreeMap;
@@ -9,13 +8,16 @@ use tidyfs::ai_contract::{AiDeterministicFacts, AiObservation, AiPathMode};
 
 pub const MAX_LABELS_PER_CANDIDATE: usize = 32;
 
+type CandidateRow = (i64, PathBuf, String, u64, Option<i64>, i64);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedCandidate {
-    pub identity_id: i64,
+    pub entry_id: i64,
     pub path: PathBuf,
     pub labels: Vec<String>,
     pub size_bytes: u64,
     pub max_mtime: Option<i64>,
+    pub observed_at: i64,
 }
 
 pub fn load_candidates(database: &Database, scan_id: i64) -> Result<Vec<IndexedCandidate>> {
@@ -40,15 +42,18 @@ pub fn observation_for(
 ) -> AiObservation {
     let path = privacy_path(&candidate.path, path_mode);
     let classification = (candidate.labels.len() == 1).then(|| candidate.labels[0].clone());
-    let protected = candidate.labels.iter().any(|label| is_protected_label(label));
+    let protected = candidate
+        .labels
+        .iter()
+        .any(|label| is_protected_label(label));
     let age_seconds = candidate.max_mtime.and_then(|mtime| {
-        let age = util::unix_now().saturating_sub(mtime);
+        let age = candidate.observed_at.saturating_sub(mtime);
         (age >= 0).then_some(age as u64)
     });
 
     AiObservation {
         scan_id,
-        candidate_key: format!("scan-{scan_id}:classification-{}", candidate.identity_id),
+        candidate_key: format!("scan-{scan_id}:entry-{}", candidate.entry_id),
         path,
         path_mode,
         size_bytes: candidate.size_bytes,
@@ -109,18 +114,21 @@ fn load_candidates_matching(
     let sql = if path.is_some() {
         r#"
         SELECT
-          c.id,
+          e.id,
           c.path,
           c.label,
           COALESCE(dt.allocated_size_bytes, e.allocated_size_bytes, 0) AS size_bytes,
-          COALESCE(dt.max_mtime, e.mtime)
+          COALESCE(dt.max_mtime, e.mtime),
+          COALESCE(s.finished_at, s.started_at)
         FROM classifications c
+        JOIN scans s
+          ON s.id = c.scan_id
+        JOIN entries e
+          ON e.scan_id = c.scan_id
+         AND e.path = c.path
         LEFT JOIN directory_totals dt
           ON dt.scan_id = c.scan_id
          AND dt.path = c.path
-        LEFT JOIN entries e
-          ON e.scan_id = c.scan_id
-         AND e.path = c.path
         WHERE c.scan_id = ?1
           AND c.path = ?2
         ORDER BY c.path ASC, c.id ASC
@@ -128,18 +136,21 @@ fn load_candidates_matching(
     } else {
         r#"
         SELECT
-          c.id,
+          e.id,
           c.path,
           c.label,
           COALESCE(dt.allocated_size_bytes, e.allocated_size_bytes, 0) AS size_bytes,
-          COALESCE(dt.max_mtime, e.mtime)
+          COALESCE(dt.max_mtime, e.mtime),
+          COALESCE(s.finished_at, s.started_at)
         FROM classifications c
+        JOIN scans s
+          ON s.id = c.scan_id
+        JOIN entries e
+          ON e.scan_id = c.scan_id
+         AND e.path = c.path
         LEFT JOIN directory_totals dt
           ON dt.scan_id = c.scan_id
          AND dt.path = c.path
-        LEFT JOIN entries e
-          ON e.scan_id = c.scan_id
-         AND e.path = c.path
         WHERE c.scan_id = ?1
         ORDER BY c.path ASC, c.id ASC
         "#
@@ -170,35 +181,35 @@ fn load_candidates_matching(
     Ok(grouped.into_values().collect())
 }
 
-fn map_candidate_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, PathBuf, String, u64, Option<i64>)> {
+fn map_candidate_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CandidateRow> {
     Ok((
         row.get::<_, i64>(0)?,
         PathBuf::from(row.get::<_, String>(1)?),
         row.get::<_, String>(2)?,
         row.get::<_, i64>(3)?.max(0) as u64,
         row.get::<_, Option<i64>>(4)?,
+        row.get::<_, i64>(5)?,
     ))
 }
 
-fn merge_candidate(
-    grouped: &mut BTreeMap<PathBuf, IndexedCandidate>,
-    row: (i64, PathBuf, String, u64, Option<i64>),
-) {
-    let (classification_id, path, label, size_bytes, max_mtime) = row;
+fn merge_candidate(grouped: &mut BTreeMap<PathBuf, IndexedCandidate>, row: CandidateRow) {
+    let (entry_id, path, label, size_bytes, max_mtime, observed_at) = row;
     grouped
         .entry(path.clone())
         .and_modify(|candidate| {
-            candidate.identity_id = candidate.identity_id.min(classification_id);
+            candidate.entry_id = candidate.entry_id.min(entry_id);
             candidate.labels.push(label.clone());
             candidate.size_bytes = candidate.size_bytes.max(size_bytes);
             candidate.max_mtime = max_optional(candidate.max_mtime, max_mtime);
+            candidate.observed_at = candidate.observed_at.min(observed_at);
         })
         .or_insert_with(|| IndexedCandidate {
-            identity_id: classification_id,
+            entry_id,
             path,
             labels: vec![label],
             size_bytes,
             max_mtime,
+            observed_at,
         });
 }
 
@@ -277,11 +288,12 @@ mod tests {
 
     fn candidate() -> IndexedCandidate {
         IndexedCandidate {
-            identity_id: 7,
+            entry_id: 7,
             path: PathBuf::from("/home/alice/work/private/.gradle/caches/modules-2"),
             labels: vec!["cache".to_owned()],
             size_bytes: 1024,
-            max_mtime: None,
+            max_mtime: Some(1_000),
+            observed_at: 2_000,
         }
     }
 
@@ -312,6 +324,13 @@ mod tests {
         assert!(is_protected_label("secret_material"));
         assert!(is_protected_label("nix_store"));
         assert!(!is_protected_label("cache"));
+    }
+
+    #[test]
+    fn observation_uses_stable_scan_identity_and_time() {
+        let observation = observation_for(42, &candidate(), AiPathMode::Full, Risk::Low);
+        assert_eq!(observation.candidate_key, "scan-42:entry-7");
+        assert_eq!(observation.age_seconds, Some(1_000));
     }
 
     #[test]
