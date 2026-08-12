@@ -1,6 +1,7 @@
 mod actions;
 mod adapters;
 mod ai_facts;
+mod ai_planning;
 mod analyze;
 mod classify;
 mod clean;
@@ -121,7 +122,7 @@ enum Command {
         root: Option<PathBuf>,
     },
 
-    /// Explain what a path appears to be using deterministic classifications.
+    /// Explain what a path appears to be using deterministic classifications and stored AI evidence.
     Explain {
         /// Path to explain.
         path: PathBuf,
@@ -135,7 +136,7 @@ enum Command {
         children: bool,
     },
 
-    /// Build a read-only cleanup plan from rules and policy.
+    /// Build a cleanup plan from deterministic policy, optionally enriched by local AI advice.
     Plan {
         /// Scan id to inspect. Defaults to latest completed scan.
         #[arg(long)]
@@ -164,6 +165,18 @@ enum Command {
         /// Limit printed allowed candidates.
         #[arg(long, default_value_t = 50)]
         limit: usize,
+
+        /// Enrich already-eligible deterministic quarantine candidates through a local AI gateway.
+        #[arg(long)]
+        ai_endpoint: Option<String>,
+
+        /// Path disclosure mode for AI-enriched planning.
+        #[arg(long, value_enum, default_value_t = CliAiPathMode::Redacted)]
+        ai_path_mode: CliAiPathMode,
+
+        /// Maximum unique deterministic paths to analyze with AI (1..=100).
+        #[arg(long, default_value_t = 10)]
+        ai_limit: usize,
     },
 
     /// Preview allowed cleanup candidates without touching the filesystem.
@@ -368,6 +381,9 @@ fn main() -> Result<()> {
             include_blocked,
             include_adapters,
             limit,
+            ai_endpoint,
+            ai_path_mode,
+            ai_limit,
         } => {
             let max_risk = if safe { rules::Risk::Low } else { risk.into() };
             let query = plan::PlanQuery {
@@ -377,6 +393,9 @@ fn main() -> Result<()> {
                 include_blocked,
                 include_adapters,
                 limit,
+                ai_endpoint,
+                ai_path_mode: ai_path_mode.into(),
+                ai_limit,
             };
             plan::run_plan(&mut database, query)?;
         }
