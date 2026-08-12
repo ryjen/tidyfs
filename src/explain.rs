@@ -1,3 +1,5 @@
+use crate::ai_facts;
+use crate::ai_planning;
 use crate::db::Database;
 use crate::util;
 use anyhow::{Context, Result};
@@ -97,8 +99,61 @@ pub fn print_explanation(database: &Database, query: ExplainQuery) -> Result<()>
         }
     }
 
+    print_ai_evidence(database, scan.id, &path)?;
+
     if query.children {
         print_child_summary(database, scan.id, &path)?;
+    }
+
+    Ok(())
+}
+
+fn print_ai_evidence(database: &Database, scan_id: i64, path: &Path) -> Result<()> {
+    let Some(stored) = ai_planning::load_evidence(database, scan_id, path)? else {
+        return Ok(());
+    };
+    let fresh = ai_planning::stored_evidence_is_fresh(database, scan_id, &stored)?;
+    let proposal = &stored.evidence.proposal;
+
+    println!();
+    println!("ai_recommendation:");
+    println!("  authority: advisory_only");
+    println!("  freshness: {}", if fresh { "fresh" } else { "stale" });
+    println!("  created_at: {}", stored.created_at);
+    println!("  candidate_key: {}", stored.evidence.candidate_key);
+    println!(
+        "  path_mode: {}",
+        ai_facts::path_mode_name(stored.evidence.path_mode)
+    );
+    println!("  analyzed_risk_threshold: {}", stored.evidence.max_risk);
+    println!("  observation: {}", stored.evidence.observation_digest);
+    println!(
+        "  classification: {}",
+        util::terminal_safe(&proposal.classification)
+    );
+    println!("  confidence: {:.3}", proposal.confidence);
+    println!("  risk: {}", ai_planning::ai_risk_name(proposal.risk));
+    println!(
+        "  recommendation: {}",
+        ai_planning::action_name(proposal.recommended_action)
+    );
+    println!(
+        "  provenance: {}/{}",
+        util::terminal_safe(&proposal.provenance.provider),
+        util::terminal_safe(&proposal.provenance.model)
+    );
+    if let Some(request_id) = &proposal.provenance.request_id {
+        println!("  request_id: {}", util::terminal_safe(request_id));
+    }
+    println!("  rationale:");
+    for rationale in &proposal.rationale {
+        println!("    - {}", util::terminal_safe(rationale));
+    }
+    if !proposal.caveats.is_empty() {
+        println!("  caveats:");
+        for caveat in &proposal.caveats {
+            println!("    - {}", util::terminal_safe(caveat));
+        }
     }
 
     Ok(())
