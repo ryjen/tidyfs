@@ -17,7 +17,7 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
 pub struct LoopbackGatewayConfig {
-    pub address: SocketAddr,
+    address: SocketAddr,
     pub connect_timeout: Duration,
     pub io_timeout: Duration,
     pub max_request_bytes: usize,
