@@ -1,6 +1,6 @@
 use crate::ai::{AiCleanupProposal, AiRecommendedAction};
 use crate::ai_contract::{
-    validate_transport_response, AiObservation, AiPathMode, AiTransportRequest, AiTransportResponse,
+    validate_transport_response, AiPathMode, AiTransportRequest, AiTransportResponse,
 };
 use crate::ai_provider::{AiAnalysisProvider, AiAnalysisRequest, AiProviderError};
 use std::io::{Read, Write};
@@ -324,7 +324,7 @@ fn unavailable(message: impl Into<String>) -> AiProviderError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_contract::AiDeterministicFacts;
+    use crate::ai_contract::{AiDeterministicFacts, AiObservation};
     use std::net::TcpListener;
     use std::thread;
 
