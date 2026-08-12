@@ -2,11 +2,12 @@
 
 `tidyfs` is an AI-enabled, conservative filesystem cleanup and disk-usage intelligence CLI.
 
-Milestone 6.1 adds parallel subtree scanning plus tool-native adapter inspection and planning:
+Milestone 6.1 adds parallel subtree scanning plus tool-native adapter inspection and planning. Local AI analysis is available through an explicit loopback gateway:
 
 ```bash
 tidyfs scan ~
 tidyfs scan ~ --jobs 8
+tidyfs analyze --endpoint http://127.0.0.1:8000 --limit 10
 tidyfs plan --safe
 tidyfs adapters
 tidyfs plan --risk medium --include-adapters
@@ -25,6 +26,9 @@ Implemented:
 - directory aggregation
 - deterministic classification
 - `explain` command
+- bounded, read-only `analyze` command through a numeric loopback gateway
+- canonical AI observation binding and strict provider-neutral JSON transport
+- explicit AI path privacy modes (`full`, `basename`, `redacted`)
 - YAML cleanup rules
 - policy validation
 - cleanup candidate persistence
@@ -42,10 +46,10 @@ Implemented:
 
 Planned / evolving:
 
-- AI-assisted classification and cleanup recommendations
+- integrating validated AI recommendations into deterministic planning
 - semantic explanation of filesystem usage and cleanup plans
 - AI-generated candidate rules or policy suggestions
-- bounded AI integration that feeds the deterministic planner rather than bypassing it
+- hardened non-loopback gateway transport, if remote inference becomes necessary
 
 Adapters currently inspect/report only. They do not execute cleanup commands.
 
@@ -71,7 +75,44 @@ The intended invariant is:
 
 > AI may broaden understanding and improve recommendations; deterministic policy controls what can actually happen.
 
-AI-generated output must therefore be treated as untrusted input to the same validation path as any other cleanup rule or candidate. It cannot authorize permanent deletion, bypass risk gates, suppress blocked-candidate reporting, or directly invoke arbitrary shell commands.
+AI-generated output is untrusted input. It cannot authorize permanent deletion, bypass risk gates, suppress blocked-candidate reporting, or directly invoke arbitrary shell commands. The current `analyze` command does not feed recommendations into planning or mutation; that integration has a separate policy/revalidation boundary.
+
+## Local AI analysis
+
+`tidyfs analyze` reads already-indexed classification facts and sends a bounded set of candidates to an explicitly configured local gateway implementing `POST /v1/analyze`.
+
+```bash
+# Full paths are acceptable for an explicitly selected loopback model.
+tidyfs analyze \
+  --endpoint http://127.0.0.1:8000 \
+  --limit 10
+
+# Reduce path disclosure while preserving recognized ecosystem structure.
+tidyfs analyze \
+  --endpoint http://127.0.0.1:8000 \
+  --root ~/src \
+  --path-mode redacted \
+  --limit 5
+
+# Analyze a specific completed scan with a bounded response size/timeout.
+tidyfs analyze \
+  --endpoint http://[::1]:8000 \
+  --scan-id 42 \
+  --timeout-ms 15000 \
+  --max-response-bytes 65536
+```
+
+The initial runtime deliberately accepts **numeric loopback addresses only** (`127.0.0.0/8` or `::1`). It performs no DNS resolution, carries no credentials, follows no redirects, and rejects transfer-encoded responses. Remote HTTP/HTTPS gateways are not silently enabled.
+
+Path modes:
+
+- `full` — exact indexed path; default for the explicit loopback-only transport
+- `basename` — basename only
+- `redacted` — removes user/project prefixes while preserving selected structures such as `.gradle/caches`, `.cache`, `DerivedData`, `node_modules`, and `/nix/store`
+
+The request contains metadata only: path according to the selected privacy mode, size/age, bounded deterministic labels, policy context, candidate identity, and an observation digest over the exact post-privacy facts sent to inference. File contents are not sent.
+
+Every accepted response must match the request ID and observation digest, pass strict JSON/schema validation, use the restricted action vocabulary (`ignore`, `review`, `quarantine`), and carry matching provenance. Provider failures produce no fallback recommendation.
 
 ## Adapter commands
 
@@ -99,6 +140,7 @@ cargo run -- scan ~ --jobs 8
 cargo run -- top --depth 2 --limit 20
 cargo run -- classify --summary
 cargo run -- explain ~/.cache --children
+cargo run -- analyze --endpoint http://127.0.0.1:8000 --limit 10
 cargo run -- plan --safe
 cargo run -- clean --dry-run
 cargo run -- clean --safe --interactive
@@ -132,9 +174,8 @@ It does not:
 - execute adapter cleanup commands
 - run arbitrary shell commands
 - allow AI output to bypass policy validation or approval
-- inspect file contents as part of the current deterministic scan path
-
-The current milestone does not yet invoke an AI provider. AI integration is intended to sit above the deterministic planner and safety gates described above.
+- send arbitrary file contents to the AI gateway
+- allow the AI gateway to mutate the filesystem
 
 Real quarantine execution requires both:
 
@@ -163,9 +204,9 @@ They are visible in plans and dry-runs, but are not executable yet.
 ```text
 scan facts
 -> deterministic classifications
+-> optional bounded AI analysis (advisory only today)
 -> YAML cleanup rules
 -> adapter inspection
--> optional AI-assisted analysis
 -> policy validation
 -> cleanup candidates / blocked candidates
 -> dry-run preview
