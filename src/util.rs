@@ -5,6 +5,7 @@ pub use identity::fingerprint;
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -128,6 +129,27 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// Render untrusted text without allowing terminal control or bidi control characters.
+pub fn terminal_safe(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for character in value.chars() {
+        let bidi_control = matches!(
+            character,
+            '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        );
+        if character.is_control() || bidi_control {
+            write!(&mut output, "\\u{{{:x}}}", character as u32)
+                .expect("writing to String cannot fail");
+        } else {
+            output.push(character);
+        }
+    }
+    output
+}
+
 pub fn data_dir() -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -142,7 +164,7 @@ pub fn quarantine_root() -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_bytes, interrupted_action_count};
+    use super::{format_bytes, interrupted_action_count, terminal_safe};
     use rusqlite::Connection;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -163,6 +185,17 @@ mod tests {
         assert_eq!(format_bytes(0), "0 B");
         assert_eq!(format_bytes(1023), "1023 B");
         assert_eq!(format_bytes(1024), "1.0 KiB");
+    }
+
+    #[test]
+    fn escapes_terminal_and_bidi_controls() {
+        assert_eq!(terminal_safe("plain text"), "plain text");
+        let escaped = terminal_safe("\u{1b}[31mred\u{7}\n\u{202e}txt");
+        assert!(!escaped.contains('\u{1b}'));
+        assert!(!escaped.contains('\u{7}'));
+        assert!(!escaped.contains('\n'));
+        assert!(!escaped.contains('\u{202e}'));
+        assert_eq!(escaped, "\\u{1b}[31mred\\u{7}\\u{a}\\u{202e}txt");
     }
 
     #[test]

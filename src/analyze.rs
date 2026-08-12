@@ -133,7 +133,10 @@ fn print_proposal(index: usize, request: &AiAnalysisRequest, proposal: &AiCleanu
         util::format_bytes(request.observation.size_bytes)
     );
     println!("  observation: {}", request.observation_digest);
-    println!("  classification: {}", proposal.classification);
+    println!(
+        "  classification: {}",
+        util::terminal_safe(&proposal.classification)
+    );
     println!("  confidence: {:.3}", proposal.confidence);
     println!("  risk: {}", ai_risk_name(proposal.risk));
     println!(
@@ -142,19 +145,20 @@ fn print_proposal(index: usize, request: &AiAnalysisRequest, proposal: &AiCleanu
     );
     println!(
         "  provenance: {}/{}",
-        proposal.provenance.provider, proposal.provenance.model
+        util::terminal_safe(&proposal.provenance.provider),
+        util::terminal_safe(&proposal.provenance.model)
     );
     if let Some(request_id) = &proposal.provenance.request_id {
-        println!("  request_id: {request_id}");
+        println!("  request_id: {}", util::terminal_safe(request_id));
     }
     println!("  rationale:");
     for rationale in &proposal.rationale {
-        println!("    - {rationale}");
+        println!("    - {}", util::terminal_safe(rationale));
     }
     if !proposal.caveats.is_empty() {
         println!("  caveats:");
         for caveat in &proposal.caveats {
-            println!("    - {caveat}");
+            println!("    - {}", util::terminal_safe(caveat));
         }
     }
 }
