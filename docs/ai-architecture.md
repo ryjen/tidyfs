@@ -1,6 +1,6 @@
 # AI architecture and trust boundary
 
-`tidyfs` is intended to use AI to improve filesystem understanding and cleanup recommendations without making model output authoritative for filesystem mutation.
+`tidyfs` uses AI to improve filesystem understanding and cleanup recommendations without making model output authoritative for filesystem mutation.
 
 ## Mental model
 
@@ -31,7 +31,7 @@ The model is an advisor. The deterministic planner and policy layer remain the a
 
 ## AI responsibilities
 
-AI may eventually:
+AI may:
 
 - classify ambiguous disk usage from bounded metadata and adapter facts;
 - explain why space is being consumed;
@@ -69,23 +69,35 @@ Unknown schema versions and malformed values fail closed.
 
 ## Provenance
 
-Recommendations carry provider/model provenance and may carry a request identifier. Future provider integration should additionally persist enough bounded input context or a digest of that context to reproduce and explain why a recommendation was made without unnecessarily retaining sensitive filesystem data.
+Recommendations carry provider/model provenance and may carry a request identifier. Provider integration should additionally persist enough bounded input context or a digest of that context to reproduce and explain why a recommendation was made without unnecessarily retaining sensitive filesystem data.
 
 ## Privacy and data minimization
 
-The preferred inference input is metadata already gathered by tidyfs: paths where necessary, sizes, ages, classifications, adapter facts, and deterministic rule results. Reading or transmitting arbitrary file contents is not required for the initial AI feature set and should remain opt-in if ever introduced.
+The inference boundary is designed around metadata already gathered by tidyfs: candidate identity, path, size, age, deterministic classification/rule context, and adapter source. Reading or transmitting arbitrary file contents is not part of the initial AI request contract.
 
-Local inference or a supervisor/model gateway is preferred over coupling the mutation core to a hosted provider SDK. Provider credentials and network access should remain outside the filesystem mutation boundary.
+A future privacy-hardening iteration may replace or redact raw paths for remote providers where semantic path information is unnecessary.
+
+Local inference or a supervisor/model gateway is preferred over coupling the mutation core to a hosted provider SDK. Provider credentials and network access remain outside the filesystem mutation boundary.
 
 ## Provider boundary
 
-A future provider abstraction should accept a bounded analysis request and return a serialized proposal. It should not receive references to `clean`, quarantine, recovery, database mutation, or filesystem mutation primitives.
+`AiAnalysisProvider` is the provider-neutral port. It accepts an `AiAnalysisRequest` containing bounded filesystem facts and returns an `AiCleanupProposal` or a provider error.
 
-This keeps the core model-provider independent and allows local models, a supervisor gateway, or hosted inference to be swapped without changing the safety path.
+Callers use `analyze_validated`, which rejects a provider response unless the proposal passes the independent proposal validator. Provider failure or invalid model output therefore produces no accepted recommendation.
+
+The core port contains no HTTP client, hosted-provider SDK, credentials, or filesystem mutation capability. A concrete local/supervisor gateway adapter should:
+
+1. serialize only the bounded request facts;
+2. invoke the configured model gateway;
+3. deserialize the response into `AiCleanupProposal`;
+4. map transport/parse failures to `AiProviderError`;
+5. return the proposal to `analyze_validated` for independent validation.
+
+A hosted-provider adapter can implement the same port without changing planning or mutation code.
 
 ## Threats to test explicitly
 
-Provider integration must include tests for:
+Provider and planner integration must include tests for:
 
 - malformed/partial model output;
 - unknown schema versions;
