@@ -15,6 +15,12 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -31,6 +37,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -44,10 +53,33 @@ jobs:
             exit 1
           fi
 
+      - name: Verify dispatched tag is exact checkout
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release tag must match vX.Y.Z: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          git fetch --force --tags origin
+          tag_commit="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          if [[ "$head_commit" != "$tag_commit" ]]; then
+            echo "workflow checkout $head_commit does not match ${RELEASE_TAG} commit $tag_commit" >&2
+            exit 1
+          fi
+
       - name: Build and verify release bundle
         shell: bash
+        env:
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            RELEASE_TAG="$DISPATCH_TAG" bash scripts/package-release.sh
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             RELEASE_TAG="$GITHUB_REF_NAME" bash scripts/package-release.sh
           else
             version="$({ cargo metadata --no-deps --format-version 1; } | python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["packages"][0]["version"])')"
@@ -65,7 +97,9 @@ jobs:
 
   release:
     name: Publish GitHub release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'workflow_dispatch'
     needs: verify
     runs-on: ubuntu-24.04
     permissions:
@@ -77,10 +111,21 @@ jobs:
           name: ${{ env.RELEASE_ARTIFACT_NAME }}
           path: dist
 
+      - name: Resolve release tag
+        shell: bash
+        env:
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "RELEASE_TAG=$DISPATCH_TAG" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_TAG=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          fi
+
       - name: Verify handed-off checksum
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           bundle="tidyfs-${version}-${RELEASE_TARGET}"
           test -f "dist/${bundle}.tar.gz"
           test -f "dist/${bundle}.tar.gz.sha256"
@@ -95,11 +140,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           bundle="tidyfs-${version}-${RELEASE_TARGET}"
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$RELEASE_TAG" \
             "dist/${bundle}.tar.gz" \
             "dist/${bundle}.tar.gz.sha256" \
             --verify-tag \
             --generate-notes \
-            --title "tidyfs $GITHUB_REF_NAME"
+            --title "tidyfs $RELEASE_TAG"
