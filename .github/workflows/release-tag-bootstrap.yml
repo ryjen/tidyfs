@@ -1,0 +1,45 @@
+name: Release tag bootstrap
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release-tag-bootstrap.yml
+
+permissions:
+  contents: write
+
+jobs:
+  create-tag:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-24.04
+    env:
+      EXPECTED_SHA: 1e54e99ca11cd3ead6165839d851a40def9a48ea
+      RELEASE_TAG: v0.6.1
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+
+      - name: Validate immutable release inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.event.pull_request.base.sha }}" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          version="$({ cargo metadata --no-deps --format-version 1; } | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          test "v${version}" = "$RELEASE_TAG"
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "tag ${RELEASE_TAG} already exists" >&2
+            exit 1
+          fi
+
+      - name: Create exact lightweight tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag "$RELEASE_TAG" "$EXPECTED_SHA"
+          git push origin "refs/tags/${RELEASE_TAG}"
