@@ -181,7 +181,7 @@ fn analyze_plan_candidates(
     for candidate in candidates.iter() {
         if candidate.blocked
             || !candidate.reversible
-            || !matches!(candidate.action_type.as_str(), "quarantine" | "trash")
+            || candidate.action_type != "quarantine"
             || candidate.path.to_string_lossy().starts_with("adapter://")
         {
             continue;
