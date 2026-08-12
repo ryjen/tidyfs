@@ -76,6 +76,11 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
         }
     }
 
+    let ai_enabled = query.ai_endpoint.is_some();
+    if ai_enabled {
+        invalidate_prior_ai_plan(database, scan.id)?;
+    }
+
     let rules = rules::load_builtin_rules()?;
     let paths = ai_facts::load_candidates(database, scan.id)?;
 
@@ -131,7 +136,6 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
         }
     }
 
-    let ai_enabled = query.ai_endpoint.is_some();
     let evidence = if let Some(endpoint) = &query.ai_endpoint {
         analyze_plan_candidates(
             database,
@@ -170,6 +174,20 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
         evidence.len(),
     );
 
+    Ok(())
+}
+
+fn invalidate_prior_ai_plan(database: &mut Database, scan_id: i64) -> Result<()> {
+    let tx = database.transaction()?;
+    tx.execute(
+        "DELETE FROM cleanup_candidates WHERE scan_id = ?1",
+        params![scan_id],
+    )?;
+    tx.execute(
+        "DELETE FROM ai_recommendations WHERE scan_id = ?1",
+        params![scan_id],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
