@@ -1,11 +1,17 @@
 use crate::adapters;
+use crate::ai_facts::{self, IndexedCandidate};
+use crate::ai_planning::{self, AiEvidence};
 use crate::db::Database;
 use crate::rules::{self, Risk, Rule};
 use crate::util;
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use rusqlite::params;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use tidyfs::ai_contract::AiPathMode;
+use tidyfs::ai_gateway::{LoopbackGatewayConfig, LoopbackGatewayProvider};
+
+const MAX_AI_PLAN_CANDIDATES: usize = 100;
 
 #[derive(Debug)]
 pub struct PlanQuery {
@@ -15,14 +21,9 @@ pub struct PlanQuery {
     pub include_blocked: bool,
     pub include_adapters: bool,
     pub limit: usize,
-}
-
-#[derive(Debug, Clone)]
-struct ClassifiedPath {
-    path: PathBuf,
-    labels: Vec<String>,
-    size_bytes: u64,
-    max_mtime: Option<i64>,
+    pub ai_endpoint: Option<String>,
+    pub ai_path_mode: AiPathMode,
+    pub ai_limit: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -38,9 +39,16 @@ struct PlannedCandidate {
     reason: String,
     blocked: bool,
     blocked_reason: Option<String>,
+    ai: Option<AiEvidence>,
 }
 
 pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
+    if query.ai_endpoint.is_some()
+        && (query.ai_limit == 0 || query.ai_limit > MAX_AI_PLAN_CANDIDATES)
+    {
+        bail!("plan --ai-limit must be between 1 and {MAX_AI_PLAN_CANDIDATES}");
+    }
+
     let scan = match query.scan_id {
         Some(id) => database.get_scan(id)?,
         None => database.latest_completed_scan()?,
@@ -50,13 +58,22 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
         .root
         .as_ref()
         .map(|p| util::normalize_path_best_effort(p));
+    if let Some(root) = &root_filter {
+        if !root.starts_with(&scan.root_path) {
+            bail!(
+                "plan root {} is outside scan root {}",
+                root.display(),
+                scan.root_path.display()
+            );
+        }
+    }
 
     let rules = rules::load_builtin_rules()?;
-    let paths = load_classified_paths(database, scan.id)?;
+    let paths = ai_facts::load_candidates(database, scan.id)?;
 
     let mut candidates = Vec::new();
 
-    for path in paths {
+    for path in &paths {
         if let Some(root) = &root_filter {
             if !path.path.starts_with(root) {
                 continue;
@@ -64,8 +81,8 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
         }
 
         for rule in &rules {
-            if rule_matches(rule, &path) {
-                let blocked_reason = validate_policy(rule, &path, query.max_risk);
+            if rule_matches(rule, path) {
+                let blocked_reason = validate_policy(rule, path, query.max_risk);
                 let blocked = blocked_reason.is_some();
 
                 candidates.push(PlannedCandidate {
@@ -80,6 +97,7 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
                     reason: rule.reason.clone(),
                     blocked,
                     blocked_reason,
+                    ai: None,
                 });
             }
         }
@@ -100,18 +118,36 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
                 reason: adapter_candidate.reason,
                 blocked,
                 blocked_reason: adapter_candidate.blocked_reason,
+                ai: None,
             });
         }
     }
+
+    let ai_enabled = query.ai_endpoint.is_some();
+    let evidence = if let Some(endpoint) = &query.ai_endpoint {
+        analyze_plan_candidates(
+            database,
+            scan.id,
+            &paths,
+            &mut candidates,
+            endpoint,
+            query.ai_path_mode,
+            query.max_risk,
+            query.ai_limit,
+        )?
+    } else {
+        Vec::new()
+    };
 
     candidates.sort_by(|a, b| {
         a.blocked
             .cmp(&b.blocked)
             .then_with(|| b.size_bytes.cmp(&a.size_bytes))
             .then_with(|| a.path.cmp(&b.path))
+            .then_with(|| a.rule_id.cmp(&b.rule_id))
     });
 
-    persist_candidates(database, scan.id, &candidates)?;
+    persist_plan(database, scan.id, &candidates, ai_enabled, &evidence)?;
 
     print_plan(
         scan.id,
@@ -120,67 +156,89 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
         &candidates,
         query.include_blocked,
         query.limit,
+        ai_enabled,
+        evidence.len(),
     );
 
     Ok(())
 }
 
-fn load_classified_paths(database: &Database, scan_id: i64) -> Result<Vec<ClassifiedPath>> {
-    let mut stmt = database.connection().prepare(
-        r#"
-        SELECT
-          c.path,
-          c.label,
-          COALESCE(dt.allocated_size_bytes, e.allocated_size_bytes, 0) AS size_bytes,
-          dt.max_mtime
-        FROM classifications c
-        LEFT JOIN directory_totals dt
-          ON dt.scan_id = c.scan_id
-         AND dt.path = c.path
-        LEFT JOIN entries e
-          ON e.scan_id = c.scan_id
-         AND e.path = c.path
-        WHERE c.scan_id = ?1
-        ORDER BY c.path ASC
-        "#,
-    )?;
+fn analyze_plan_candidates(
+    database: &Database,
+    scan_id: i64,
+    paths: &[IndexedCandidate],
+    candidates: &mut [PlannedCandidate],
+    endpoint: &str,
+    path_mode: AiPathMode,
+    max_risk: Risk,
+    ai_limit: usize,
+) -> Result<Vec<AiEvidence>> {
+    let config = LoopbackGatewayConfig::from_endpoint(endpoint)
+        .context("validating plan AI gateway endpoint")?;
+    let provider = LoopbackGatewayProvider::new(config);
 
-    let mut grouped: BTreeMap<PathBuf, ClassifiedPath> = BTreeMap::new();
-
-    let rows = stmt.query_map(params![scan_id], |row| {
-        Ok((
-            PathBuf::from(row.get::<_, String>(0)?),
-            row.get::<_, String>(1)?,
-            row.get::<_, i64>(2)? as u64,
-            row.get::<_, Option<i64>>(3)?,
-        ))
-    })?;
-
-    for row in rows {
-        let (path, label, size_bytes, max_mtime) = row?;
-        grouped
-            .entry(path.clone())
-            .and_modify(|existing| {
-                existing.labels.push(label.clone());
-                existing.size_bytes = existing.size_bytes.max(size_bytes);
-                existing.max_mtime = match (existing.max_mtime, max_mtime) {
-                    (Some(a), Some(b)) => Some(a.max(b)),
-                    (None, Some(b)) => Some(b),
-                    (a, None) => a,
-                };
-            })
-            .or_insert_with(|| ClassifiedPath {
-                path,
-                labels: vec![label],
-                size_bytes,
-                max_mtime,
-            });
+    let mut eligible: BTreeMap<PathBuf, u64> = BTreeMap::new();
+    for candidate in candidates.iter() {
+        if candidate.blocked
+            || !candidate.reversible
+            || !matches!(candidate.action_type.as_str(), "quarantine" | "trash")
+            || candidate.path.to_string_lossy().starts_with("adapter://")
+        {
+            continue;
+        }
+        eligible
+            .entry(candidate.path.clone())
+            .and_modify(|size| *size = (*size).max(candidate.size_bytes))
+            .or_insert(candidate.size_bytes);
     }
 
-    Ok(grouped.into_values().collect())
+    let mut selected: Vec<_> = eligible.into_iter().collect();
+    selected.sort_by(|(left_path, left_size), (right_path, right_size)| {
+        right_size
+            .cmp(left_size)
+            .then_with(|| left_path.cmp(right_path))
+    });
+    selected.truncate(ai_limit);
+
+    let mut evidence = Vec::with_capacity(selected.len());
+    for (path, _) in selected {
+        let facts = paths
+            .iter()
+            .find(|item| item.path == path)
+            .with_context(|| format!("classified facts missing for AI plan path {}", path.display()))?;
+        evidence.push(ai_planning::analyze_candidate(
+            &provider, database, scan_id, facts, path_mode, max_risk,
+        )?);
+    }
+
+    let evidence_by_path: BTreeMap<_, _> = evidence
+        .iter()
+        .map(|item| (item.path.clone(), item.clone()))
+        .collect();
+
+    for candidate in candidates.iter_mut() {
+        let Some(item) = evidence_by_path.get(&candidate.path) else {
+            continue;
+        };
+        let decision = ai_planning::conservative_policy(
+            candidate.risk,
+            &candidate.action_type,
+            candidate.reversible,
+            candidate.blocked,
+            candidate.blocked_reason.as_deref(),
+            &item.proposal,
+            max_risk,
+        );
+        candidate.risk = decision.risk;
+        candidate.blocked = decision.blocked;
+        candidate.blocked_reason = decision.blocked_reason;
+        candidate.ai = Some(item.clone());
+    }
+
+    Ok(evidence)
 }
 
-fn rule_matches(rule: &Rule, item: &ClassifiedPath) -> bool {
+fn rule_matches(rule: &Rule, item: &IndexedCandidate) -> bool {
     let m = &rule.r#match;
 
     if !m.labels_any.is_empty()
@@ -228,7 +286,7 @@ fn rule_matches(rule: &Rule, item: &ClassifiedPath) -> bool {
     true
 }
 
-fn validate_policy(rule: &Rule, item: &ClassifiedPath, max_risk: Risk) -> Option<String> {
+fn validate_policy(rule: &Rule, item: &IndexedCandidate, max_risk: Risk) -> Option<String> {
     if item.labels.iter().any(|label| {
         matches!(
             label.as_str(),
@@ -263,10 +321,12 @@ fn validate_policy(rule: &Rule, item: &ClassifiedPath, max_risk: Risk) -> Option
     None
 }
 
-fn persist_candidates(
+fn persist_plan(
     database: &mut Database,
     scan_id: i64,
     candidates: &[PlannedCandidate],
+    replace_ai_evidence: bool,
+    evidence: &[AiEvidence],
 ) -> Result<()> {
     let tx = database.transaction()?;
     tx.execute(
@@ -304,10 +364,14 @@ fn persist_candidates(
     }
 
     drop(stmt);
+    if replace_ai_evidence {
+        ai_planning::replace_evidence(&tx, scan_id, evidence, now)?;
+    }
     tx.commit()?;
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn print_plan(
     scan_id: i64,
     scan_root: &Path,
@@ -315,6 +379,8 @@ fn print_plan(
     candidates: &[PlannedCandidate],
     include_blocked: bool,
     limit: usize,
+    ai_enabled: bool,
+    ai_analyzed_paths: usize,
 ) {
     let allowed: Vec<_> = candidates.iter().filter(|c| !c.blocked).collect();
     let blocked: Vec<_> = candidates.iter().filter(|c| c.blocked).collect();
@@ -330,6 +396,8 @@ fn print_plan(
             .iter()
             .any(|c| c.path.to_string_lossy().starts_with("adapter://"))
     );
+    println!("ai_enriched: {ai_enabled}");
+    println!("ai_analyzed_paths: {ai_analyzed_paths}");
     println!("allowed_candidates: {}", allowed.len());
     println!("allowed_reclaimable: {}", util::format_bytes(allowed_bytes));
     println!("blocked_or_report_only: {}", blocked.len());
@@ -383,4 +451,26 @@ fn print_candidate(c: &PlannedCandidate) {
     println!("           Risk: {}", c.risk);
     println!("           Action: {}", c.action_type);
     println!("           Reason: {}", c.reason);
+
+    if let Some(ai) = &c.ai {
+        println!(
+            "           AI: {} ({:.0}%) risk={} recommendation={}",
+            util::terminal_safe(&ai.proposal.classification),
+            ai.proposal.confidence * 100.0,
+            ai_planning::ai_risk_name(ai.proposal.risk),
+            ai_planning::action_name(ai.proposal.recommended_action)
+        );
+        println!("           AI observation: {}", ai.observation_digest);
+        println!(
+            "           AI provenance: {}/{}",
+            util::terminal_safe(&ai.proposal.provenance.provider),
+            util::terminal_safe(&ai.proposal.provenance.model)
+        );
+        for rationale in &ai.proposal.rationale {
+            println!("           AI rationale: {}", util::terminal_safe(rationale));
+        }
+        for caveat in &ai.proposal.caveats {
+            println!("           AI caveat: {}", util::terminal_safe(caveat));
+        }
+    }
 }
