@@ -38,10 +38,14 @@ impl LoopbackGatewayConfig {
             invalid("loopback gateway endpoint must use a numeric IP address and explicit port")
         })?;
         if !address.ip().is_loopback() {
-            return Err(invalid("loopback gateway endpoint must resolve to a loopback IP"));
+            return Err(invalid(
+                "loopback gateway endpoint must resolve to a loopback IP",
+            ));
         }
         if address.port() == 0 {
-            return Err(invalid("loopback gateway endpoint must use a non-zero port"));
+            return Err(invalid(
+                "loopback gateway endpoint must use a non-zero port",
+            ));
         }
 
         Ok(Self {
@@ -73,7 +77,9 @@ impl LoopbackGatewayProvider {
 
         let request = AiTransportRequest::new(next_request_id(), analysis.observation.clone());
         if request.candidate.observation.digest != analysis.observation_digest {
-            return Err(invalid("transport observation digest does not match analysis request"));
+            return Err(invalid(
+                "transport observation digest does not match analysis request",
+            ));
         }
 
         let body = request_json(&request);
@@ -91,8 +97,9 @@ impl LoopbackGatewayProvider {
     }
 
     fn post_json(&self, body: &[u8]) -> Result<Vec<u8>, AiProviderError> {
-        let mut stream = TcpStream::connect_timeout(&self.config.address, self.config.connect_timeout)
-            .map_err(|error| unavailable(format!("connecting to loopback gateway: {error}")))?;
+        let mut stream =
+            TcpStream::connect_timeout(&self.config.address, self.config.connect_timeout)
+                .map_err(|error| unavailable(format!("connecting to loopback gateway: {error}")))?;
         stream
             .set_read_timeout(Some(self.config.io_timeout))
             .map_err(|error| unavailable(format!("setting gateway read timeout: {error}")))?;
@@ -150,7 +157,9 @@ fn parse_http_response(raw: &[u8], max_body_bytes: usize) -> Result<Vec<u8>, AiP
         .next()
         .ok_or_else(|| invalid("gateway response is missing HTTP status"))?;
     if status != "HTTP/1.1 200 OK" && status != "HTTP/1.0 200 OK" {
-        return Err(unavailable(format!("gateway returned non-success status: {status}")));
+        return Err(unavailable(format!(
+            "gateway returned non-success status: {status}"
+        )));
     }
 
     let mut content_length = None;
@@ -160,8 +169,11 @@ fn parse_http_response(raw: &[u8], max_body_bytes: usize) -> Result<Vec<u8>, AiP
         };
         let name = name.trim();
         let value = value.trim();
-        if name.eq_ignore_ascii_case("transfer-encoding") && !value.eq_ignore_ascii_case("identity") {
-            return Err(invalid("gateway transfer encoding is unsupported; redirects/chunking are disabled"));
+        if name.eq_ignore_ascii_case("transfer-encoding") && !value.eq_ignore_ascii_case("identity")
+        {
+            return Err(invalid(
+                "gateway transfer encoding is unsupported; redirects/chunking are disabled",
+            ));
         }
         if name.eq_ignore_ascii_case("content-length") {
             let parsed = value
@@ -175,11 +187,15 @@ fn parse_http_response(raw: &[u8], max_body_bytes: usize) -> Result<Vec<u8>, AiP
 
     let body = &raw[boundary + 4..];
     if body.len() > max_body_bytes {
-        return Err(invalid("gateway response body exceeds configured size limit"));
+        return Err(invalid(
+            "gateway response body exceeds configured size limit",
+        ));
     }
     if let Some(expected) = content_length {
         if expected != body.len() {
-            return Err(invalid("gateway response Content-Length does not match body"));
+            return Err(invalid(
+                "gateway response Content-Length does not match body",
+            ));
         }
     }
     Ok(body.to_vec())
@@ -428,7 +444,8 @@ mod tests {
 
     #[test]
     fn rejects_redirect_and_oversized_response() {
-        let redirect = b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/\r\nContent-Length: 0\r\n\r\n";
+        let redirect =
+            b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/\r\nContent-Length: 0\r\n\r\n";
         assert!(parse_http_response(redirect, 1024).is_err());
 
         let oversized = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ntest";
