@@ -89,6 +89,21 @@ pub fn run_analyze(database: &Database, query: AnalyzeQuery) -> Result<()> {
             )
         })?;
 
+        ai_facts::reconstruct_bound_observation(
+            database,
+            scan.id,
+            &candidate.path,
+            query.path_mode,
+            query.max_risk,
+            &request.observation_digest,
+        )
+        .with_context(|| {
+            format!(
+                "AI analysis became stale before it could be accepted for candidate {}",
+                request.observation.candidate_key
+            )
+        })?;
+
         println!();
         print_proposal(index + 1, &request, &proposal);
     }
