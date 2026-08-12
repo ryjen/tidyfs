@@ -56,7 +56,10 @@ impl fmt::Display for AiAnalysisError {
             Self::Provider(error) => error.fmt(f),
             Self::InvalidProposal(error) => write!(f, "AI proposal rejected: {error}"),
             Self::ObservationDigestMismatch => {
-                write!(f, "AI analysis request observation digest is stale or invalid")
+                write!(
+                    f,
+                    "AI analysis request observation digest is stale or invalid"
+                )
             }
         }
     }
