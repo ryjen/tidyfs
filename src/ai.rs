@@ -89,10 +89,9 @@ impl fmt::Display for AiProposalValidationError {
                 f,
                 "AI proposal rationale item exceeds {AI_MAX_EXPLANATION_ITEM_BYTES} bytes"
             ),
-            Self::TooManyCaveatItems => write!(
-                f,
-                "AI proposal exceeds {AI_MAX_CAVEAT_ITEMS} caveat items"
-            ),
+            Self::TooManyCaveatItems => {
+                write!(f, "AI proposal exceeds {AI_MAX_CAVEAT_ITEMS} caveat items")
+            }
             Self::CaveatItemTooLong => write!(
                 f,
                 "AI proposal caveat item exceeds {AI_MAX_EXPLANATION_ITEM_BYTES} bytes"
