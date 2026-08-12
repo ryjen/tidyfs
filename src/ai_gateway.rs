@@ -1,8 +1,9 @@
-use crate::ai::{AiCleanupProposal, AiRecommendedAction};
+use crate::ai::AiCleanupProposal;
 use crate::ai_contract::{
-    validate_transport_response, AiPathMode, AiTransportRequest, AiTransportResponse,
+    validate_transport_response, AiObservationBinding, AiTransportRequest, AiTransportResponse,
 };
 use crate::ai_provider::{AiAnalysisProvider, AiAnalysisRequest, AiProviderError};
+use serde::Deserialize;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::str::FromStr;
@@ -18,6 +19,7 @@ pub struct LoopbackGatewayConfig {
     pub address: SocketAddr,
     pub connect_timeout: Duration,
     pub io_timeout: Duration,
+    pub max_request_bytes: usize,
     pub max_response_bytes: usize,
 }
 
@@ -52,6 +54,7 @@ impl LoopbackGatewayConfig {
             address,
             connect_timeout: Duration::from_secs(3),
             io_timeout: Duration::from_secs(15),
+            max_request_bytes: 32 * 1024,
             max_response_bytes: 64 * 1024,
         })
     }
@@ -82,16 +85,29 @@ impl LoopbackGatewayProvider {
             ));
         }
 
-        let body = request_json(&request);
-        let raw = self.post_json(body.as_bytes())?;
-        let response_text = std::str::from_utf8(&raw)
-            .map_err(|_| invalid("gateway response body is not valid UTF-8 JSON"))?;
-        if !response_text.trim_start().starts_with('{') {
-            return Err(invalid("gateway response body must be a JSON object"));
+        let body = serde_json::to_vec(&request)
+            .map_err(|error| invalid(format!("serializing gateway JSON request: {error}")))?;
+        if body.len() > self.config.max_request_bytes {
+            return Err(invalid("gateway request exceeds configured size limit"));
         }
 
-        let response: AiTransportResponse = serde_yaml::from_str(response_text)
+        let raw = self.post_json(&body)?;
+        let strict: StrictGatewayResponse = serde_json::from_slice(&raw)
             .map_err(|error| invalid(format!("invalid gateway JSON response: {error}")))?;
+        if strict.proposal.provenance.request_id.as_deref() != Some(strict.request_id.as_str()) {
+            return Err(invalid(
+                "gateway proposal provenance request id does not match response request id",
+            ));
+        }
+
+        let response = AiTransportResponse {
+            contract_version: strict.contract_version,
+            request_id: strict.request_id,
+            proposal: strict.proposal,
+            observation: AiObservationBinding {
+                digest: strict.observation.digest,
+            },
+        };
         validate_transport_response(&request, response)
             .map_err(|error| invalid(format!("gateway response rejected: {error}")))
     }
@@ -140,6 +156,21 @@ impl AiAnalysisProvider for LoopbackGatewayProvider {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictGatewayResponse {
+    contract_version: u32,
+    request_id: String,
+    proposal: AiCleanupProposal,
+    observation: StrictObservationBinding,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictObservationBinding {
+    digest: String,
+}
+
 fn parse_http_response(raw: &[u8], max_body_bytes: usize) -> Result<Vec<u8>, AiProviderError> {
     let boundary = raw
         .windows(4)
@@ -149,20 +180,27 @@ fn parse_http_response(raw: &[u8], max_body_bytes: usize) -> Result<Vec<u8>, AiP
         return Err(invalid("gateway response headers exceed size limit"));
     }
 
-    let header_bytes = &raw[..boundary];
-    let headers = std::str::from_utf8(header_bytes)
+    let headers = std::str::from_utf8(&raw[..boundary])
         .map_err(|_| invalid("gateway returned non-UTF-8 HTTP headers"))?;
     let mut lines = headers.split("\r\n");
     let status = lines
         .next()
         .ok_or_else(|| invalid("gateway response is missing HTTP status"))?;
-    if status != "HTTP/1.1 200 OK" && status != "HTTP/1.0 200 OK" {
+    let mut status_parts = status.split_whitespace();
+    let version = status_parts
+        .next()
+        .ok_or_else(|| invalid("gateway response has malformed HTTP status"))?;
+    let code = status_parts
+        .next()
+        .ok_or_else(|| invalid("gateway response has malformed HTTP status"))?;
+    if !matches!(version, "HTTP/1.0" | "HTTP/1.1") || code != "200" {
         return Err(unavailable(format!(
             "gateway returned non-success status: {status}"
         )));
     }
 
     let mut content_length = None;
+    let mut content_type = None;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             return Err(invalid("gateway returned malformed HTTP header"));
@@ -183,6 +221,20 @@ fn parse_http_response(raw: &[u8], max_body_bytes: usize) -> Result<Vec<u8>, AiP
                 return Err(invalid("gateway returned multiple Content-Length headers"));
             }
         }
+        if name.eq_ignore_ascii_case("content-type") && content_type.replace(value).is_some() {
+            return Err(invalid("gateway returned multiple Content-Type headers"));
+        }
+    }
+
+    let Some(content_type) = content_type else {
+        return Err(invalid("gateway response is missing Content-Type"));
+    };
+    if !content_type
+        .split(';')
+        .next()
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"))
+    {
+        return Err(invalid("gateway response Content-Type must be application/json"));
     }
 
     let body = &raw[boundary + 4..];
@@ -208,102 +260,6 @@ fn host_header(address: SocketAddr) -> String {
     }
 }
 
-fn request_json(request: &AiTransportRequest) -> String {
-    let facts = &request.candidate.facts;
-    let deterministic = &facts.deterministic;
-    let actions = request
-        .constraints
-        .allowed_actions
-        .iter()
-        .map(|action| json_string(action_name(*action)))
-        .collect::<Vec<_>>()
-        .join(",");
-    let labels = facts
-        .labels
-        .iter()
-        .map(|label| json_string(label))
-        .collect::<Vec<_>>()
-        .join(",");
-
-    format!(
-        concat!(
-            "{{\"contract_version\":{},\"request_id\":{},\"task\":{},",
-            "\"candidate\":{{\"scan_id\":{},\"candidate_key\":{},\"path\":{},",
-            "\"path_mode\":{},\"size_bytes\":{},\"age_seconds\":{},\"labels\":[{}],",
-            "\"deterministic\":{{\"classification\":{},\"matched_rule\":{},",
-            "\"protected\":{},\"max_allowed_risk\":{}}},\"adapter\":{},",
-            "\"observation\":{{\"digest\":{}}}}},",
-            "\"constraints\":{{\"allowed_actions\":[{}],\"file_contents_available\":{},",
-            "\"mutation_authority\":{}}}}}"
-        ),
-        request.contract_version,
-        json_string(&request.request_id),
-        json_string(&request.task),
-        facts.scan_id,
-        json_string(&facts.candidate_key),
-        json_string(&facts.path),
-        json_string(path_mode_name(facts.path_mode)),
-        facts.size_bytes,
-        json_optional_u64(facts.age_seconds),
-        labels,
-        json_optional_string(deterministic.classification.as_deref()),
-        json_optional_string(deterministic.matched_rule.as_deref()),
-        deterministic.protected,
-        json_string(&deterministic.max_allowed_risk),
-        json_optional_string(facts.adapter.as_deref()),
-        json_string(&request.candidate.observation.digest),
-        actions,
-        request.constraints.file_contents_available,
-        request.constraints.mutation_authority,
-    )
-}
-
-fn json_optional_u64(value: Option<u64>) -> String {
-    value.map_or_else(|| "null".to_owned(), |value| value.to_string())
-}
-
-fn json_optional_string(value: Option<&str>) -> String {
-    value.map_or_else(|| "null".to_owned(), json_string)
-}
-
-fn json_string(value: &str) -> String {
-    let mut output = String::with_capacity(value.len() + 2);
-    output.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => output.push_str("\\\""),
-            '\\' => output.push_str("\\\\"),
-            '\u{08}' => output.push_str("\\b"),
-            '\u{0c}' => output.push_str("\\f"),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            value if value <= '\u{1f}' => {
-                output.push_str(&format!("\\u{:04x}", value as u32));
-            }
-            value => output.push(value),
-        }
-    }
-    output.push('"');
-    output
-}
-
-fn action_name(action: AiRecommendedAction) -> &'static str {
-    match action {
-        AiRecommendedAction::Ignore => "ignore",
-        AiRecommendedAction::Review => "review",
-        AiRecommendedAction::Quarantine => "quarantine",
-    }
-}
-
-fn path_mode_name(mode: AiPathMode) -> &'static str {
-    match mode {
-        AiPathMode::Full => "full",
-        AiPathMode::Basename => "basename",
-        AiPathMode::Redacted => "redacted",
-    }
-}
-
 fn next_request_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -324,7 +280,8 @@ fn unavailable(message: impl Into<String>) -> AiProviderError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_contract::{AiDeterministicFacts, AiObservation};
+    use crate::ai::{AiRecommendedAction, AiRisk};
+    use crate::ai_contract::{AiDeterministicFacts, AiObservation, AiPathMode};
     use std::net::TcpListener;
     use std::thread;
 
@@ -358,12 +315,11 @@ mod tests {
     }
 
     #[test]
-    fn request_encoder_emits_parseable_json_with_exact_binding() {
+    fn request_serialization_is_strict_json_with_exact_binding() {
         let analysis = analysis_request();
         let request = AiTransportRequest::new("req-1".to_owned(), analysis.observation.clone());
-        let encoded = request_json(&request);
-        assert!(encoded.starts_with('{'));
-        let decoded: AiTransportRequest = serde_yaml::from_str(&encoded).expect("JSON parses");
+        let encoded = serde_json::to_vec(&request).expect("serialize request");
+        let decoded: AiTransportRequest = serde_json::from_slice(&encoded).expect("parse request");
         assert_eq!(decoded, request);
     }
 
@@ -376,79 +332,111 @@ mod tests {
 
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept request");
-            let mut request = Vec::new();
-            let mut buffer = [0_u8; 4096];
-            loop {
-                let read = stream.read(&mut buffer).expect("read request");
-                request.extend_from_slice(&buffer[..read]);
-                if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                    let boundary = request
-                        .windows(4)
-                        .position(|window| window == b"\r\n\r\n")
-                        .unwrap();
-                    let headers = std::str::from_utf8(&request[..boundary]).unwrap();
-                    let length = headers
-                        .lines()
-                        .find_map(|line| {
-                            let (name, value) = line.split_once(':')?;
-                            name.eq_ignore_ascii_case("content-length")
-                                .then(|| value.trim().parse::<usize>().ok())
-                                .flatten()
-                        })
-                        .unwrap();
-                    if request.len() >= boundary + 4 + length {
-                        break;
-                    }
-                }
-            }
-            let boundary = request
-                .windows(4)
-                .position(|window| window == b"\r\n\r\n")
-                .unwrap();
-            let body = std::str::from_utf8(&request[boundary + 4..]).unwrap();
-            let transport: AiTransportRequest = serde_yaml::from_str(body).expect("request JSON");
+            let request = read_http_request(&mut stream);
+            let transport: AiTransportRequest =
+                serde_json::from_slice(&request).expect("request JSON");
             assert_eq!(transport.candidate.observation.digest, expected_digest);
 
-            let response = format!(
-                concat!(
-                    "{{\"contract_version\":1,\"request_id\":{},",
-                    "\"proposal\":{{\"schema_version\":1,\"classification\":\"regenerable_cache\",",
-                    "\"confidence\":0.91,\"rationale\":[\"generated cache\"],\"caveats\":[],",
-                    "\"risk\":\"medium\",\"recommended_action\":\"review\",",
-                    "\"provenance\":{{\"provider\":\"fake\",\"model\":\"test\",",
-                    "\"request_id\":{}}}}},\"observation\":{{\"digest\":{}}}}}"
-                ),
-                json_string(&transport.request_id),
-                json_string(&transport.request_id),
-                json_string(&transport.candidate.observation.digest),
-            );
-            let headers = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                response.len()
-            );
-            stream.write_all(headers.as_bytes()).unwrap();
-            stream.write_all(response.as_bytes()).unwrap();
+            let response = serde_json::json!({
+                "contract_version": 1,
+                "request_id": transport.request_id,
+                "proposal": {
+                    "schema_version": 1,
+                    "classification": "regenerable_cache",
+                    "confidence": 0.91,
+                    "rationale": ["generated cache"],
+                    "caveats": [],
+                    "risk": "medium",
+                    "recommended_action": "review",
+                    "provenance": {
+                        "provider": "fake",
+                        "model": "test",
+                        "request_id": transport.request_id,
+                    }
+                },
+                "observation": { "digest": transport.candidate.observation.digest }
+            });
+            write_json_response(&mut stream, &serde_json::to_vec(&response).unwrap());
         });
 
         let provider = LoopbackGatewayProvider::new(LoopbackGatewayConfig {
             address,
             connect_timeout: Duration::from_secs(1),
             io_timeout: Duration::from_secs(1),
+            max_request_bytes: 16 * 1024,
             max_response_bytes: 16 * 1024,
         });
         let proposal = provider.analyze(&analysis).expect("valid proposal");
         assert_eq!(proposal.classification, "regenerable_cache");
+        assert_eq!(proposal.risk, AiRisk::Medium);
         assert_eq!(proposal.recommended_action, AiRecommendedAction::Review);
         server.join().unwrap();
     }
 
     #[test]
-    fn rejects_redirect_and_oversized_response() {
-        let redirect =
-            b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/\r\nContent-Length: 0\r\n\r\n";
+    fn rejects_redirect_wrong_content_type_and_oversized_response() {
+        let redirect = b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
         assert!(parse_http_response(redirect, 1024).is_err());
 
-        let oversized = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ntest";
+        let wrong_type = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\n{}";
+        assert!(parse_http_response(wrong_type, 1024).is_err());
+
+        let oversized = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4\r\n\r\ntest";
         assert!(parse_http_response(oversized, 3).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_response_fields() {
+        let response = br#"{
+          "contract_version": 1,
+          "request_id": "req",
+          "proposal": {
+            "schema_version": 1,
+            "classification": "cache",
+            "confidence": 0.9,
+            "rationale": ["safe"],
+            "caveats": [],
+            "risk": "low",
+            "recommended_action": "review",
+            "provenance": {"provider":"fake","model":"test","request_id":"req"}
+          },
+          "observation": {"digest":"sha256:test"},
+          "unexpected": true
+        }"#;
+        assert!(serde_json::from_slice::<StrictGatewayResponse>(response).is_err());
+    }
+
+    fn read_http_request(stream: &mut TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let read = stream.read(&mut buffer).expect("read request");
+            assert!(read > 0, "request closed before body was complete");
+            request.extend_from_slice(&buffer[..read]);
+            if let Some(boundary) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                let headers = std::str::from_utf8(&request[..boundary]).unwrap();
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap();
+                if request.len() >= boundary + 4 + length {
+                    return request[boundary + 4..boundary + 4 + length].to_vec();
+                }
+            }
+        }
+    }
+
+    fn write_json_response(stream: &mut TcpStream, body: &[u8]) {
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(headers.as_bytes()).unwrap();
+        stream.write_all(body).unwrap();
     }
 }
