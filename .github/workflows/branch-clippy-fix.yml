@@ -1,0 +1,78 @@
+name: Branch clippy fix bootstrap
+
+on:
+  pull_request:
+    paths:
+      - 'src/ai_planning.rs'
+      - 'src/plan.rs'
+      - '.github/workflows/branch-clippy-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply localized Clippy fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          ai = Path('src/ai_planning.rs')
+          text = ai.read_text()
+          old = '''        let observation =\n            ai_facts::observation_for(42, &candidate, AiPathMode::Redacted, Risk::Low);\n        StoredAiEvidence {'''
+          new = '''        let observation =\n            ai_facts::observation_for(42, &candidate, AiPathMode::Redacted, Risk::Low);\n        let observation_digest = observation.digest();\n        StoredAiEvidence {'''
+          if old not in text:
+              raise SystemExit('expected stored observation snippet not found')
+          text = text.replace(old, new, 1)
+          old = '                observation_digest: observation.digest(),'
+          if old not in text:
+              raise SystemExit('expected observation digest expression not found')
+          text = text.replace(old, '                observation_digest,', 1)
+          ai.write_text(text)
+
+          plan = Path('src/plan.rs')
+          text = plan.read_text()
+          marker = 'const MAX_AI_PLAN_CANDIDATES: usize = 100;\n'
+          options = '''const MAX_AI_PLAN_CANDIDATES: usize = 100;\n\n#[derive(Debug, Clone, Copy)]\nstruct AiPlanOptions<'a> {\n    endpoint: &'a str,\n    path_mode: AiPathMode,\n    max_risk: Risk,\n    limit: usize,\n}\n'''
+          if marker not in text:
+              raise SystemExit('plan options insertion marker not found')
+          text = text.replace(marker, options, 1)
+
+          old_call = '''            &mut candidates,\n            endpoint,\n            query.ai_path_mode,\n            query.max_risk,\n            query.ai_limit,\n        )?'''
+          new_call = '''            &mut candidates,\n            AiPlanOptions {\n                endpoint,\n                path_mode: query.ai_path_mode,\n                max_risk: query.max_risk,\n                limit: query.ai_limit,\n            },\n        )?'''
+          if old_call not in text:
+              raise SystemExit('AI plan call snippet not found')
+          text = text.replace(old_call, new_call, 1)
+
+          start = text.index('fn analyze_plan_candidates(')
+          end = text.index('\nfn rule_matches(', start)
+          segment = text[start:end]
+          old_sig = '''    candidates: &mut [PlannedCandidate],\n    endpoint: &str,\n    path_mode: AiPathMode,\n    max_risk: Risk,\n    ai_limit: usize,\n) -> Result<Vec<AiEvidence>> {'''
+          new_sig = '''    candidates: &mut [PlannedCandidate],\n    options: AiPlanOptions<'_>,\n) -> Result<Vec<AiEvidence>> {'''
+          if old_sig not in segment:
+              raise SystemExit('AI plan function signature snippet not found')
+          segment = segment.replace(old_sig, new_sig, 1)
+          segment = segment.replace('LoopbackGatewayConfig::from_endpoint(endpoint)', 'LoopbackGatewayConfig::from_endpoint(options.endpoint)', 1)
+          segment = segment.replace('selected.truncate(ai_limit);', 'selected.truncate(options.limit);', 1)
+          segment = segment.replace('facts, path_mode, max_risk,', 'facts, options.path_mode, options.max_risk,', 1)
+          segment = segment.replace('            max_risk,\n        );', '            options.max_risk,\n        );', 1)
+          text = text[:start] + segment + text[end:]
+          plan.write_text(text)
+          PY
+          cargo fmt --all
+      - name: Commit Clippy fixes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/ai_planning.rs src/plan.rs
+          git commit -m "fix: tighten AI plan enrichment API"
+          git push origin HEAD:${{ github.head_ref }}
