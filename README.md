@@ -1,6 +1,6 @@
 # tidyfs
 
-`tidyfs` is a conservative disk-usage intelligence CLI.
+`tidyfs` is an AI-enabled, conservative filesystem cleanup and disk-usage intelligence CLI.
 
 Milestone 6.1 adds parallel subtree scanning plus tool-native adapter inspection and planning:
 
@@ -13,7 +13,7 @@ tidyfs plan --risk medium --include-adapters
 tidyfs clean --dry-run --risk medium
 ```
 
-The project goal is to build a safe cleanup planner, not an autonomous file deleter.
+The project goal is to combine AI-assisted cleanup intelligence with a deterministic, policy-gated, reversible execution core. AI may propose classifications, explanations, cleanup candidates, or rules; it does not bypass safety policy or directly perform destructive filesystem mutation.
 
 ## Current scope
 
@@ -39,9 +39,39 @@ Implemented:
 - `restore`
 - read-only tool-native adapters
 - no permanent deletion
-- no AI
+
+Planned / evolving:
+
+- AI-assisted classification and cleanup recommendations
+- semantic explanation of filesystem usage and cleanup plans
+- AI-generated candidate rules or policy suggestions
+- bounded AI integration that feeds the deterministic planner rather than bypassing it
 
 Adapters currently inspect/report only. They do not execute cleanup commands.
+
+## AI trust boundary
+
+AI is an advisory and planning layer, not the filesystem mutation authority.
+
+```text
+filesystem facts / adapter facts
+-> deterministic classifications
+-> AI-assisted analysis and suggestions
+-> candidate rules / cleanup recommendations
+-> deterministic planner
+-> policy and risk validation
+-> dry-run preview
+-> explicit interactive approval
+-> reversible quarantine execution
+-> durable action state
+-> recover or restore
+```
+
+The intended invariant is:
+
+> AI may broaden understanding and improve recommendations; deterministic policy controls what can actually happen.
+
+AI-generated output must therefore be treated as untrusted input to the same validation path as any other cleanup rule or candidate. It cannot authorize permanent deletion, bypass risk gates, suppress blocked-candidate reporting, or directly invoke arbitrary shell commands.
 
 ## Adapter commands
 
@@ -101,8 +131,10 @@ It does not:
 - purge quarantine
 - execute adapter cleanup commands
 - run arbitrary shell commands
-- call AI providers
-- inspect file contents
+- allow AI output to bypass policy validation or approval
+- inspect file contents as part of the current deterministic scan path
+
+The current milestone does not yet invoke an AI provider. AI integration is intended to sit above the deterministic planner and safety gates described above.
 
 Real quarantine execution requires both:
 
@@ -133,6 +165,7 @@ scan facts
 -> deterministic classifications
 -> YAML cleanup rules
 -> adapter inspection
+-> optional AI-assisted analysis
 -> policy validation
 -> cleanup candidates / blocked candidates
 -> dry-run preview
