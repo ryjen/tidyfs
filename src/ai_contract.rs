@@ -1,6 +1,7 @@
-use crate::ai::{AiCleanupProposal, AiRecommendedAction};
+use crate::ai::{AiCleanupProposal, AiProposalValidationError, AiRecommendedAction};
 use serde::{Deserialize, Serialize};
-use std::fmt::Write as _;
+use std::error::Error;
+use std::fmt::{self, Write as _};
 
 pub const AI_TRANSPORT_CONTRACT_VERSION: u32 = 1;
 pub const AI_ANALYSIS_TASK: &str = "cleanup_candidate_analysis";
@@ -84,8 +85,8 @@ pub struct AiObservationBinding {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiTransportCandidate {
     #[serde(flatten)]
-    pub observation: AiObservation,
-    pub observation_binding: AiObservationBinding,
+    pub facts: AiObservation,
+    pub observation: AiObservationBinding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,15 +120,15 @@ pub struct AiTransportRequest {
 }
 
 impl AiTransportRequest {
-    pub fn new(request_id: String, observation: AiObservation) -> Self {
-        let digest = observation.digest();
+    pub fn new(request_id: String, facts: AiObservation) -> Self {
+        let digest = facts.digest();
         Self {
             contract_version: AI_TRANSPORT_CONTRACT_VERSION,
             request_id,
             task: AI_ANALYSIS_TASK.to_owned(),
             candidate: AiTransportCandidate {
-                observation,
-                observation_binding: AiObservationBinding { digest },
+                facts,
+                observation: AiObservationBinding { digest },
             },
             constraints: AiTransportConstraints::default(),
         }
@@ -140,6 +141,53 @@ pub struct AiTransportResponse {
     pub request_id: String,
     pub proposal: AiCleanupProposal,
     pub observation: AiObservationBinding,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AiTransportValidationError {
+    UnsupportedContractVersion(u32),
+    RequestIdMismatch,
+    ObservationDigestMismatch,
+    InvalidProposal(AiProposalValidationError),
+}
+
+impl fmt::Display for AiTransportValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedContractVersion(version) => {
+                write!(f, "unsupported AI transport contract version: {version}")
+            }
+            Self::RequestIdMismatch => write!(f, "AI response request id does not match request"),
+            Self::ObservationDigestMismatch => {
+                write!(f, "AI response observation digest does not match request")
+            }
+            Self::InvalidProposal(error) => write!(f, "AI response proposal rejected: {error}"),
+        }
+    }
+}
+
+impl Error for AiTransportValidationError {}
+
+pub fn validate_transport_response(
+    request: &AiTransportRequest,
+    response: AiTransportResponse,
+) -> Result<AiCleanupProposal, AiTransportValidationError> {
+    if response.contract_version != AI_TRANSPORT_CONTRACT_VERSION {
+        return Err(AiTransportValidationError::UnsupportedContractVersion(
+            response.contract_version,
+        ));
+    }
+    if response.request_id != request.request_id {
+        return Err(AiTransportValidationError::RequestIdMismatch);
+    }
+    if response.observation.digest != request.candidate.observation.digest {
+        return Err(AiTransportValidationError::ObservationDigestMismatch);
+    }
+    response
+        .proposal
+        .validate()
+        .map_err(AiTransportValidationError::InvalidProposal)?;
+    Ok(response.proposal)
 }
 
 fn frame(output: &mut Vec<u8>, bytes: &[u8]) {
@@ -189,19 +237,12 @@ fn sha256(input: &[u8]) -> [u8; 32] {
         0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
         0xc67178f2,
     ];
-
     let mut state = [
-        0x6a09e667_u32,
-        0xbb67ae85,
-        0x3c6ef372,
-        0xa54ff53a,
-        0x510e527f,
-        0x9b05688c,
-        0x1f83d9ab,
-        0x5be0cd19,
+        0x6a09e667_u32, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
+        0x1f83d9ab, 0x5be0cd19,
     ];
-    let bit_len = (input.len() as u64).wrapping_mul(8);
     let mut padded = input.to_vec();
+    let bit_len = (input.len() as u64).wrapping_mul(8);
     padded.push(0x80);
     while padded.len() % 64 != 56 {
         padded.push(0);
@@ -209,59 +250,47 @@ fn sha256(input: &[u8]) -> [u8; 32] {
     padded.extend_from_slice(&bit_len.to_be_bytes());
 
     for block in padded.chunks_exact(64) {
-        let mut schedule = [0_u32; 64];
-        for (index, chunk) in block.chunks_exact(4).take(16).enumerate() {
-            schedule[index] = u32::from_be_bytes(chunk.try_into().expect("four-byte chunk"));
+        let mut w = [0_u32; 64];
+        for (i, chunk) in block.chunks_exact(4).take(16).enumerate() {
+            w[i] = u32::from_be_bytes(chunk.try_into().expect("four-byte chunk"));
         }
-        for index in 16..64 {
-            let s0 = schedule[index - 15].rotate_right(7)
-                ^ schedule[index - 15].rotate_right(18)
-                ^ (schedule[index - 15] >> 3);
-            let s1 = schedule[index - 2].rotate_right(17)
-                ^ schedule[index - 2].rotate_right(19)
-                ^ (schedule[index - 2] >> 10);
-            schedule[index] = schedule[index - 16]
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16]
                 .wrapping_add(s0)
-                .wrapping_add(schedule[index - 7])
+                .wrapping_add(w[i - 7])
                 .wrapping_add(s1);
         }
-
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = state;
-        for index in 0..64 {
-            let sum1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let choice = (e & f) ^ ((!e) & g);
-            let temp1 = h
-                .wrapping_add(sum1)
-                .wrapping_add(choice)
-                .wrapping_add(K[index])
-                .wrapping_add(schedule[index]);
-            let sum0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let majority = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = sum0.wrapping_add(majority);
-
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let t1 = h
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[i])
+                .wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let t2 = s0.wrapping_add(maj);
             h = g;
             g = f;
             f = e;
-            e = d.wrapping_add(temp1);
+            e = d.wrapping_add(t1);
             d = c;
             c = b;
             b = a;
-            a = temp1.wrapping_add(temp2);
+            a = t1.wrapping_add(t2);
         }
-
-        state[0] = state[0].wrapping_add(a);
-        state[1] = state[1].wrapping_add(b);
-        state[2] = state[2].wrapping_add(c);
-        state[3] = state[3].wrapping_add(d);
-        state[4] = state[4].wrapping_add(e);
-        state[5] = state[5].wrapping_add(f);
-        state[6] = state[6].wrapping_add(g);
-        state[7] = state[7].wrapping_add(h);
+        for (slot, value) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
+            *slot = slot.wrapping_add(value);
+        }
     }
 
     let mut output = [0_u8; 32];
-    for (index, word) in state.iter().enumerate() {
-        output[index * 4..index * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    for (i, word) in state.iter().enumerate() {
+        output[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
     }
     output
 }
@@ -269,6 +298,7 @@ fn sha256(input: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::{AiProvenance, AiRecommendedAction, AiRisk, AI_PROPOSAL_SCHEMA_VERSION};
 
     fn observation() -> AiObservation {
         AiObservation {
@@ -289,6 +319,23 @@ mod tests {
         }
     }
 
+    fn proposal() -> AiCleanupProposal {
+        AiCleanupProposal {
+            schema_version: AI_PROPOSAL_SCHEMA_VERSION,
+            classification: "regenerable_build_cache".to_owned(),
+            confidence: 0.9,
+            rationale: vec!["matches generated cache layout".to_owned()],
+            caveats: vec![],
+            risk: AiRisk::Medium,
+            recommended_action: AiRecommendedAction::Review,
+            provenance: AiProvenance {
+                provider: "test".to_owned(),
+                model: "test-model".to_owned(),
+                request_id: Some("req-1".to_owned()),
+            },
+        }
+    }
+
     #[test]
     fn sha256_matches_known_vector() {
         assert_eq!(
@@ -306,7 +353,6 @@ mod tests {
             "generated_artifact".to_owned(),
             "cache".to_owned(),
         ];
-
         assert_eq!(left.digest(), right.digest());
     }
 
@@ -315,21 +361,39 @@ mod tests {
         let left = observation();
         let mut right = observation();
         right.size_bytes += 1;
-
         assert_ne!(left.digest(), right.digest());
     }
 
     #[test]
     fn transport_request_binds_the_observation_digest() {
         let request = AiTransportRequest::new("req-1".to_owned(), observation());
-
         assert_eq!(request.contract_version, AI_TRANSPORT_CONTRACT_VERSION);
         assert_eq!(request.task, AI_ANALYSIS_TASK);
-        assert_eq!(
-            request.candidate.observation_binding.digest,
-            request.candidate.observation.digest()
-        );
+        assert_eq!(request.candidate.observation.digest, request.candidate.facts.digest());
         assert!(!request.constraints.file_contents_available);
         assert!(!request.constraints.mutation_authority);
+    }
+
+    #[test]
+    fn response_must_match_request_and_observation() {
+        let request = AiTransportRequest::new("req-1".to_owned(), observation());
+        let valid = AiTransportResponse {
+            contract_version: AI_TRANSPORT_CONTRACT_VERSION,
+            request_id: request.request_id.clone(),
+            proposal: proposal(),
+            observation: request.candidate.observation.clone(),
+        };
+        assert_eq!(validate_transport_response(&request, valid), Ok(proposal()));
+
+        let mismatched = AiTransportResponse {
+            contract_version: AI_TRANSPORT_CONTRACT_VERSION,
+            request_id: "other".to_owned(),
+            proposal: proposal(),
+            observation: request.candidate.observation.clone(),
+        };
+        assert_eq!(
+            validate_transport_response(&request, mismatched),
+            Err(AiTransportValidationError::RequestIdMismatch)
+        );
     }
 }
