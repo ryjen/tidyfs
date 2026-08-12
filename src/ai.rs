@@ -173,13 +173,23 @@ mod tests {
     }
 
     #[test]
-    fn action_contract_contains_no_delete_operation() {
-        let actions = [
-            AiRecommendedAction::Ignore,
-            AiRecommendedAction::Review,
-            AiRecommendedAction::Quarantine,
-        ];
+    fn rejects_destructive_action_from_serialized_model_output() {
+        let yaml = r#"
+schema_version: 1
+classification: regenerable_build_cache
+confidence: 0.86
+rationale:
+  - matches a known build-cache layout
+risk: medium
+recommended_action: delete
+provenance:
+  provider: supervisor-gateway
+  model: filesystem-specialist
+  request_id: req-123
+"#;
 
-        assert_eq!(actions.len(), 3);
+        let result = serde_yaml::from_str::<AiCleanupProposal>(yaml);
+
+        assert!(result.is_err());
     }
 }
