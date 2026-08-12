@@ -24,7 +24,9 @@ impl fmt::Display for AiProviderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unavailable(message) => write!(f, "AI provider unavailable: {message}"),
-            Self::InvalidResponse(message) => write!(f, "AI provider returned invalid response: {message}"),
+            Self::InvalidResponse(message) => {
+                write!(f, "AI provider returned invalid response: {message}")
+            }
         }
     }
 }
@@ -56,7 +58,9 @@ pub fn analyze_validated<P: AiAnalysisProvider>(
     provider: &P,
     request: &AiAnalysisRequest,
 ) -> Result<AiCleanupProposal, AiAnalysisError> {
-    let proposal = provider.analyze(request).map_err(AiAnalysisError::Provider)?;
+    let proposal = provider
+        .analyze(request)
+        .map_err(AiAnalysisError::Provider)?;
     proposal
         .validate()
         .map_err(AiAnalysisError::InvalidProposal)?;
@@ -66,9 +70,7 @@ pub fn analyze_validated<P: AiAnalysisProvider>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::{
-        AiProvenance, AiRecommendedAction, AiRisk, AI_PROPOSAL_SCHEMA_VERSION,
-    };
+    use crate::ai::{AiProvenance, AiRecommendedAction, AiRisk, AI_PROPOSAL_SCHEMA_VERSION};
 
     #[derive(Clone)]
     struct FakeProvider {
