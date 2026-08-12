@@ -460,13 +460,14 @@ mod tests {
                 .expect("candidate exists");
         let observation =
             ai_facts::observation_for(42, &candidate, AiPathMode::Redacted, Risk::Low);
+        let observation_digest = observation.digest();
         StoredAiEvidence {
             evidence: AiEvidence {
                 path: candidate.path,
                 candidate_key: observation.candidate_key,
                 path_mode: AiPathMode::Redacted,
                 max_risk: Risk::Low,
-                observation_digest: observation.digest(),
+                observation_digest,
                 proposal: proposal(AiRisk::Low, AiRecommendedAction::Quarantine, 0.99),
             },
             created_at: 2000,

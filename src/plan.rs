@@ -13,6 +13,14 @@ use tidyfs::ai_gateway::{LoopbackGatewayConfig, LoopbackGatewayProvider};
 
 const MAX_AI_PLAN_CANDIDATES: usize = 100;
 
+#[derive(Debug, Clone, Copy)]
+struct AiPlanOptions<'a> {
+    endpoint: &'a str,
+    path_mode: AiPathMode,
+    max_risk: Risk,
+    limit: usize,
+}
+
 #[derive(Debug)]
 pub struct PlanQuery {
     pub scan_id: Option<i64>,
@@ -130,10 +138,12 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
             scan.id,
             &paths,
             &mut candidates,
-            endpoint,
-            query.ai_path_mode,
-            query.max_risk,
-            query.ai_limit,
+            AiPlanOptions {
+                endpoint,
+                path_mode: query.ai_path_mode,
+                max_risk: query.max_risk,
+                limit: query.ai_limit,
+            },
         )?
     } else {
         Vec::new()
@@ -168,12 +178,9 @@ fn analyze_plan_candidates(
     scan_id: i64,
     paths: &[IndexedCandidate],
     candidates: &mut [PlannedCandidate],
-    endpoint: &str,
-    path_mode: AiPathMode,
-    max_risk: Risk,
-    ai_limit: usize,
+    options: AiPlanOptions<'_>,
 ) -> Result<Vec<AiEvidence>> {
-    let config = LoopbackGatewayConfig::from_endpoint(endpoint)
+    let config = LoopbackGatewayConfig::from_endpoint(options.endpoint)
         .context("validating plan AI gateway endpoint")?;
     let provider = LoopbackGatewayProvider::new(config);
 
@@ -198,7 +205,7 @@ fn analyze_plan_candidates(
             .cmp(left_size)
             .then_with(|| left_path.cmp(right_path))
     });
-    selected.truncate(ai_limit);
+    selected.truncate(options.limit);
 
     let mut evidence = Vec::with_capacity(selected.len());
     for (path, _) in selected {
@@ -212,7 +219,12 @@ fn analyze_plan_candidates(
                 )
             })?;
         evidence.push(ai_planning::analyze_candidate(
-            &provider, database, scan_id, facts, path_mode, max_risk,
+            &provider,
+            database,
+            scan_id,
+            facts,
+            options.path_mode,
+            options.max_risk,
         )?);
     }
 
@@ -232,7 +244,7 @@ fn analyze_plan_candidates(
             candidate.blocked,
             candidate.blocked_reason.as_deref(),
             &item.proposal,
-            max_risk,
+            options.max_risk,
         );
         candidate.risk = decision.risk;
         candidate.blocked = decision.blocked;
