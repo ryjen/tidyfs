@@ -205,7 +205,12 @@ fn analyze_plan_candidates(
         let facts = paths
             .iter()
             .find(|item| item.path == path)
-            .with_context(|| format!("classified facts missing for AI plan path {}", path.display()))?;
+            .with_context(|| {
+                format!(
+                    "classified facts missing for AI plan path {}",
+                    path.display()
+                )
+            })?;
         evidence.push(ai_planning::analyze_candidate(
             &provider, database, scan_id, facts, path_mode, max_risk,
         )?);
@@ -467,7 +472,10 @@ fn print_candidate(c: &PlannedCandidate) {
             util::terminal_safe(&ai.proposal.provenance.model)
         );
         for rationale in &ai.proposal.rationale {
-            println!("           AI rationale: {}", util::terminal_safe(rationale));
+            println!(
+                "           AI rationale: {}",
+                util::terminal_safe(rationale)
+            );
         }
         for caveat in &ai.proposal.caveats {
             println!("           AI caveat: {}", util::terminal_safe(caveat));

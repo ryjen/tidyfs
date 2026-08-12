@@ -58,11 +58,11 @@ fn interrupted_action_count(database_path: &Path) -> Result<u64> {
 
     let connection = Connection::open_with_flags(database_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| {
-            format!(
-                "opening SQLite database read-only for startup recovery check: {}",
-                database_path.display()
-            )
-        })?;
+        format!(
+            "opening SQLite database read-only for startup recovery check: {}",
+            database_path.display()
+        )
+    })?;
 
     let actions_table_exists: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'actions')",
