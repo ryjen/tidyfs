@@ -1,5 +1,6 @@
 mod actions;
 mod adapters;
+mod ai_facts;
 mod analyze;
 mod classify;
 mod clean;
