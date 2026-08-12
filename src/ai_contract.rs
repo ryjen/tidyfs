@@ -64,10 +64,7 @@ impl AiObservation {
         frame_optional_string(&mut output, self.deterministic.classification.as_deref());
         frame_optional_string(&mut output, self.deterministic.matched_rule.as_deref());
         frame(&mut output, &[u8::from(self.deterministic.protected)]);
-        frame(
-            &mut output,
-            self.deterministic.max_allowed_risk.as_bytes(),
-        );
+        frame(&mut output, self.deterministic.max_allowed_risk.as_bytes());
         frame_optional_string(&mut output, self.adapter.as_deref());
         output
     }
@@ -238,8 +235,14 @@ fn sha256(input: &[u8]) -> [u8; 32] {
         0xc67178f2,
     ];
     let mut state = [
-        0x6a09e667_u32, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
-        0x1f83d9ab, 0x5be0cd19,
+        0x6a09e667_u32,
+        0xbb67ae85,
+        0x3c6ef372,
+        0xa54ff53a,
+        0x510e527f,
+        0x9b05688c,
+        0x1f83d9ab,
+        0x5be0cd19,
     ];
     let mut padded = input.to_vec();
     let bit_len = (input.len() as u64).wrapping_mul(8);
@@ -369,7 +372,10 @@ mod tests {
         let request = AiTransportRequest::new("req-1".to_owned(), observation());
         assert_eq!(request.contract_version, AI_TRANSPORT_CONTRACT_VERSION);
         assert_eq!(request.task, AI_ANALYSIS_TASK);
-        assert_eq!(request.candidate.observation.digest, request.candidate.facts.digest());
+        assert_eq!(
+            request.candidate.observation.digest,
+            request.candidate.facts.digest()
+        );
         assert!(!request.constraints.file_contents_available);
         assert!(!request.constraints.mutation_authority);
     }
