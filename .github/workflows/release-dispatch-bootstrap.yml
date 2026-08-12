@@ -1,0 +1,40 @@
+name: Release dispatch bootstrap
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release-dispatch-bootstrap.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch-release:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: v0.6.1
+      EXPECTED_TAG_SHA: 1e54e99ca11cd3ead6165839d851a40def9a48ea
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate exact existing release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          actual="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          test "$actual" = "$EXPECTED_TAG_SHA"
+
+      - name: Dispatch existing release workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f "tag=${RELEASE_TAG}"
