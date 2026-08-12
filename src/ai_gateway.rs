@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const ANALYZE_PATH: &str = "/v1/analyze";
 const MAX_HEADER_BYTES: usize = 16 * 1024;
+const HEADER_TERMINATOR_BYTES: usize = 4;
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
@@ -135,6 +136,7 @@ impl LoopbackGatewayProvider {
             .map_err(|error| unavailable(format!("writing gateway request: {error}")))?;
 
         let hard_limit = MAX_HEADER_BYTES
+            .saturating_add(HEADER_TERMINATOR_BYTES)
             .saturating_add(self.config.max_response_bytes)
             .saturating_add(1);
         let mut raw = Vec::new();
@@ -173,7 +175,7 @@ struct StrictObservationBinding {
 
 fn parse_http_response(raw: &[u8], max_body_bytes: usize) -> Result<Vec<u8>, AiProviderError> {
     let boundary = raw
-        .windows(4)
+        .windows(HEADER_TERMINATOR_BYTES)
         .position(|window| window == b"\r\n\r\n")
         .ok_or_else(|| invalid("gateway returned malformed HTTP headers"))?;
     if boundary > MAX_HEADER_BYTES {
@@ -207,16 +209,21 @@ fn parse_http_response(raw: &[u8], max_body_bytes: usize) -> Result<Vec<u8>, AiP
         };
         let name = name.trim();
         let value = value.trim();
-        if name.eq_ignore_ascii_case("transfer-encoding") && !value.eq_ignore_ascii_case("identity")
-        {
+
+        if name.eq_ignore_ascii_case("transfer-encoding") {
             return Err(invalid(
-                "gateway transfer encoding is unsupported; redirects/chunking are disabled",
+                "gateway Transfer-Encoding is unsupported; chunking is disabled",
             ));
         }
         if name.eq_ignore_ascii_case("content-length") {
             let parsed = value
                 .parse::<usize>()
                 .map_err(|_| invalid("gateway returned invalid Content-Length"))?;
+            if parsed > max_body_bytes {
+                return Err(invalid(
+                    "gateway response Content-Length exceeds configured size limit",
+                ));
+            }
             if content_length.replace(parsed).is_some() {
                 return Err(invalid("gateway returned multiple Content-Length headers"));
             }
@@ -234,10 +241,12 @@ fn parse_http_response(raw: &[u8], max_body_bytes: usize) -> Result<Vec<u8>, AiP
         .next()
         .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"))
     {
-        return Err(invalid("gateway response Content-Type must be application/json"));
+        return Err(invalid(
+            "gateway response Content-Type must be application/json",
+        ));
     }
 
-    let body = &raw[boundary + 4..];
+    let body = &raw[boundary + HEADER_TERMINATOR_BYTES..];
     if body.len() > max_body_bytes {
         return Err(invalid(
             "gateway response body exceeds configured size limit",
@@ -337,9 +346,11 @@ mod tests {
                 serde_json::from_slice(&request).expect("request JSON");
             assert_eq!(transport.candidate.observation.digest, expected_digest);
 
+            let request_id = transport.request_id.clone();
+            let digest = transport.candidate.observation.digest.clone();
             let response = serde_json::json!({
                 "contract_version": 1,
-                "request_id": transport.request_id,
+                "request_id": request_id,
                 "proposal": {
                     "schema_version": 1,
                     "classification": "regenerable_cache",
@@ -351,10 +362,10 @@ mod tests {
                     "provenance": {
                         "provider": "fake",
                         "model": "test",
-                        "request_id": transport.request_id,
+                        "request_id": request_id,
                     }
                 },
-                "observation": { "digest": transport.candidate.observation.digest }
+                "observation": { "digest": digest }
             });
             write_json_response(&mut stream, &serde_json::to_vec(&response).unwrap());
         });
@@ -374,14 +385,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_redirect_wrong_content_type_and_oversized_response() {
+    fn rejects_redirect_wrong_content_type_transfer_encoding_and_oversized_response() {
         let redirect = b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
         assert!(parse_http_response(redirect, 1024).is_err());
 
-        let wrong_type = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\n{}";
+        let wrong_type =
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\n{}";
         assert!(parse_http_response(wrong_type, 1024).is_err());
 
-        let oversized = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4\r\n\r\ntest";
+        let chunked = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+        assert!(parse_http_response(chunked, 1024).is_err());
+
+        let oversized =
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4\r\n\r\ntest";
         assert!(parse_http_response(oversized, 3).is_err());
     }
 
@@ -413,7 +429,10 @@ mod tests {
             let read = stream.read(&mut buffer).expect("read request");
             assert!(read > 0, "request closed before body was complete");
             request.extend_from_slice(&buffer[..read]);
-            if let Some(boundary) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+            if let Some(boundary) = request
+                .windows(HEADER_TERMINATOR_BYTES)
+                .position(|window| window == b"\r\n\r\n")
+            {
                 let headers = std::str::from_utf8(&request[..boundary]).unwrap();
                 let length = headers
                     .lines()
@@ -424,8 +443,9 @@ mod tests {
                             .flatten()
                     })
                     .unwrap();
-                if request.len() >= boundary + 4 + length {
-                    return request[boundary + 4..boundary + 4 + length].to_vec();
+                if request.len() >= boundary + HEADER_TERMINATOR_BYTES + length {
+                    let start = boundary + HEADER_TERMINATOR_BYTES;
+                    return request[start..start + length].to_vec();
                 }
             }
         }
