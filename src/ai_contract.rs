@@ -146,6 +146,7 @@ pub enum AiTransportValidationError {
     RequestIdMismatch,
     ObservationDigestMismatch,
     InvalidProposal(AiProposalValidationError),
+    DisallowedAction(AiRecommendedAction),
 }
 
 impl fmt::Display for AiTransportValidationError {
@@ -159,6 +160,9 @@ impl fmt::Display for AiTransportValidationError {
                 write!(f, "AI response observation digest does not match request")
             }
             Self::InvalidProposal(error) => write!(f, "AI response proposal rejected: {error}"),
+            Self::DisallowedAction(action) => {
+                write!(f, "AI response proposed disallowed action: {action:?}")
+            }
         }
     }
 }
@@ -184,6 +188,15 @@ pub fn validate_transport_response(
         .proposal
         .validate()
         .map_err(AiTransportValidationError::InvalidProposal)?;
+    if !request
+        .constraints
+        .allowed_actions
+        .contains(&response.proposal.recommended_action)
+    {
+        return Err(AiTransportValidationError::DisallowedAction(
+            response.proposal.recommended_action,
+        ));
+    }
     Ok(response.proposal)
 }
 
@@ -227,7 +240,7 @@ fn sha256(input: &[u8]) -> [u8; 32] {
         0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
         0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
         0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x2e1b2138, 0x4d2c6dfc,
         0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
         0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
         0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
@@ -339,6 +352,15 @@ mod tests {
         }
     }
 
+    fn response(request: &AiTransportRequest, proposal: AiCleanupProposal) -> AiTransportResponse {
+        AiTransportResponse {
+            contract_version: AI_TRANSPORT_CONTRACT_VERSION,
+            request_id: request.request_id.clone(),
+            proposal,
+            observation: request.candidate.observation.clone(),
+        }
+    }
+
     #[test]
     fn sha256_matches_known_vector() {
         assert_eq!(
@@ -383,12 +405,7 @@ mod tests {
     #[test]
     fn response_must_match_request_and_observation() {
         let request = AiTransportRequest::new("req-1".to_owned(), observation());
-        let valid = AiTransportResponse {
-            contract_version: AI_TRANSPORT_CONTRACT_VERSION,
-            request_id: request.request_id.clone(),
-            proposal: proposal(),
-            observation: request.candidate.observation.clone(),
-        };
+        let valid = response(&request, proposal());
         assert_eq!(validate_transport_response(&request, valid), Ok(proposal()));
 
         let mismatched = AiTransportResponse {
@@ -400,6 +417,39 @@ mod tests {
         assert_eq!(
             validate_transport_response(&request, mismatched),
             Err(AiTransportValidationError::RequestIdMismatch)
+        );
+    }
+
+    #[test]
+    fn response_action_must_be_allowed_by_request() {
+        let mut request = AiTransportRequest::new("req-1".to_owned(), observation());
+        request.constraints.allowed_actions = vec![AiRecommendedAction::Review];
+
+        assert_eq!(
+            validate_transport_response(&request, response(&request, proposal())),
+            Ok(proposal())
+        );
+
+        let mut disallowed = proposal();
+        disallowed.recommended_action = AiRecommendedAction::Quarantine;
+        assert_eq!(
+            validate_transport_response(&request, response(&request, disallowed)),
+            Err(AiTransportValidationError::DisallowedAction(
+                AiRecommendedAction::Quarantine
+            ))
+        );
+    }
+
+    #[test]
+    fn empty_allowed_actions_rejects_every_proposal_action() {
+        let mut request = AiTransportRequest::new("req-1".to_owned(), observation());
+        request.constraints.allowed_actions.clear();
+
+        assert_eq!(
+            validate_transport_response(&request, response(&request, proposal())),
+            Err(AiTransportValidationError::DisallowedAction(
+                AiRecommendedAction::Review
+            ))
         );
     }
 }
