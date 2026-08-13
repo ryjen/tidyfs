@@ -31,14 +31,16 @@ Coverage-guided fuzzing is appropriate for tidyfs where attacker-controlled, mod
 
 The initial fuzz target is `fuzz/fuzz_targets/ai_proposal_json.rs`. It feeds arbitrary model-style JSON into `AiCleanupProposal`, validates accepted proposals, and asserts that accepted values serialize and deserialize without semantic change.
 
-Run locally with:
+The fuzz harness uses a pinned nightly compiler and a pinned `cargo-fuzz` release. Install the same versions locally with:
 
 ```bash
-cargo install cargo-fuzz --locked
+rustup toolchain install nightly-2026-08-12
+cargo install cargo-fuzz --version 0.13.2 --locked
+mise run fuzz-ai-build
 mise run fuzz-ai
 ```
 
-Fuzzing is scheduled/manual CI rather than a pull-request blocker. Any discovered crash or invariant violation should be minimized into a deterministic regression test before the fix is merged.
+Pull-request CI deterministically builds the fuzz harness so a broken target cannot merge unnoticed. Coverage-guided fuzz execution itself remains scheduled/manual rather than a pull-request blocker. Any discovered crash or invariant violation should be minimized into a deterministic regression test before the fix is merged.
 
 Good future fuzz/property targets include:
 
@@ -85,6 +87,7 @@ Run the deterministic pull-request gate locally with:
 
 ```bash
 mise run ci
+mise run fuzz-ai-build
 ```
 
-This runs static analysis, the full deterministic test suite, and Cargo package verification. Dependency auditing remains a separate task because `cargo-audit` is an optional Cargo subcommand rather than part of the standard Rust toolchain.
+The first command runs static analysis, the full deterministic test suite, and Cargo package verification. The second reproduces the deterministic fuzz-harness build used by pull-request CI. Dependency auditing remains a separate task because `cargo-audit` is an optional Cargo subcommand rather than part of the standard Rust toolchain.
