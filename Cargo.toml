@@ -8,6 +8,7 @@ repository = "https://github.com/ryjen/tidyfs"
 readme = "README.md"
 keywords = ["filesystem", "disk-usage", "cleanup", "cli", "developer-tools"]
 categories = ["command-line-utilities", "filesystem"]
+exclude = ["/fuzz"]
 
 [dependencies]
 anyhow = "1"
