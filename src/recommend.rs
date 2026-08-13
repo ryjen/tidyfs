@@ -9,8 +9,7 @@ use std::time::Duration;
 use tidyfs::ai_contract::AiPathMode;
 use tidyfs::ai_gateway::{new_gateway_request_id, LoopbackGatewayConfig, LoopbackGatewayProvider};
 use tidyfs::ai_goal::{
-    goal_plan_digest, AiGoalCandidate, AiGoalConstraints, AiGoalRecommendation, AiGoalRequest,
-    AI_MAX_GOAL_CANDIDATES,
+    goal_plan_digest, AiGoalCandidate, AiGoalRecommendation, AiGoalRequest, AI_MAX_GOAL_CANDIDATES,
 };
 
 #[derive(Debug)]
@@ -156,7 +155,16 @@ fn load_eligible_candidates(
         FROM cleanup_candidates
         WHERE scan_id = ?1
           AND blocked = 0
-        ORDER BY path ASC, risk ASC, rule_id ASC, id ASC
+        ORDER BY path ASC,
+          CASE risk
+            WHEN 'low' THEN 0
+            WHEN 'medium' THEN 1
+            WHEN 'high' THEN 2
+            WHEN 'forbidden' THEN 3
+            ELSE 4
+          END ASC,
+          rule_id ASC,
+          id ASC
         "#,
     )?;
 
@@ -479,8 +487,8 @@ mod tests {
                     rule_id,
                     risk,
                     action,
-                    i64::from(reversible),
-                    i64::from(blocked),
+                    if reversible { 1_i64 } else { 0_i64 },
+                    if blocked { 1_i64 } else { 0_i64 },
                 ],
             )
             .expect("insert cleanup candidate");
@@ -558,15 +566,15 @@ mod tests {
     }
 
     #[test]
-    fn eligible_plan_counts_each_path_once() {
+    fn eligible_plan_counts_each_path_once_and_prefers_lowest_risk() {
         let (database, path) = seeded_database("dedup");
         insert_candidate(
             &database,
             1,
             "/tmp/tidyfs-root/cache",
             100,
-            "a",
-            "low",
+            "medium-rule",
+            "medium",
             "quarantine",
             true,
             false,
@@ -576,14 +584,50 @@ mod tests {
             2,
             "/tmp/tidyfs-root/cache",
             100,
-            "b",
+            "low-rule",
             "low",
             "quarantine",
             true,
             false,
         );
 
-        let candidates = load_eligible_candidates(&database, 42, None, Risk::Low, 100).unwrap();
+        let candidates = load_eligible_candidates(&database, 42, None, Risk::Medium, 100).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].id, 2);
+        assert_eq!(candidates[0].risk, Risk::Low);
+        drop(database);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn eligible_plan_respects_root_filter() {
+        let (database, path) = seeded_database("root-filter");
+        insert_candidate(
+            &database,
+            1,
+            "/tmp/tidyfs-root/in/a",
+            100,
+            "in",
+            "low",
+            "quarantine",
+            true,
+            false,
+        );
+        insert_candidate(
+            &database,
+            2,
+            "/tmp/tidyfs-root/out/b",
+            200,
+            "out",
+            "low",
+            "quarantine",
+            true,
+            false,
+        );
+
+        let root = Path::new("/tmp/tidyfs-root/in");
+        let candidates =
+            load_eligible_candidates(&database, 42, Some(root), Risk::Low, 100).unwrap();
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].id, 1);
         drop(database);
