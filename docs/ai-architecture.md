@@ -137,10 +137,13 @@ ADR 0001 accepts a second read-only AI task: selecting among already-eligible ca
 persisted cleanup_candidates
         |
         v
-filter: unblocked + reversible + quarantine + root/risk
+filter: unblocked + reversible + quarantine + root
         |
         v
-canonicalize one row per filesystem path
+canonicalize one row per filesystem path using highest deterministic risk
+        |
+        v
+apply requested risk threshold
         |
         v
 bounded candidate IDs/facts + numeric reclaim target
@@ -155,7 +158,7 @@ POST /v1/recommend
 strict request/provenance/digest + selected-ID validation
         |
         v
-re-read persisted plan with identical filters
+re-read persisted plan with identical rules
         |
         v
 exact fact comparison + digest re-derivation
@@ -169,7 +172,7 @@ read-only terminal output
 
 The model returns selected candidate IDs plus rationale/caveats. It does not own the byte total. `tidyfs` calculates reclaim bytes from the revalidated current plan and determines whether the target is met.
 
-Multiple deterministic rules may match one path. Goal recommendation canonicalizes to one eligible candidate row per path before inference so the same filesystem payload is not counted more than once.
+Multiple deterministic rules may match one path. Goal recommendation canonicalizes to one candidate row per path before applying the requested risk threshold, using the highest deterministic risk among otherwise eligible reversible quarantine matches. This prevents both double-counting and a lower-risk duplicate from hiding a higher-risk rule for the same filesystem payload.
 
 The goal/plan digest is an opaque correlation and freshness binding, not an authentication token or capability. The authoritative stale-state defense is the post-inference persisted-plan re-read and exact comparison of the facts supplied to inference.
 
@@ -219,6 +222,8 @@ Supported path modes:
 
 `tidyfs analyze` permits an explicitly selected loopback model to receive full paths. AI-enriched planning and goal-oriented `recommend` default to `redacted` because the model only needs enough structure to advise on candidates whose eligibility is already determined by tidyfs.
 
+The path privacy transformation is shared between candidate analysis and goal recommendation so the two inference routes cannot silently diverge in redaction behavior.
+
 ## Provenance and explainability
 
 Accepted candidate-level recommendations retain enough evidence to explain their origin and freshness:
@@ -250,6 +255,7 @@ Tests and integration behavior cover:
 - stale/nonexistent/changed candidates;
 - stale or changed persisted goal-plan facts;
 - unknown or duplicate goal-selected candidate IDs;
+- duplicate-path risk canonicalization and reclaim-byte deduplication;
 - request-ID, provenance-ID, and digest mismatch;
 - non-loopback/hostname endpoint rejection;
 - redirects, transfer encoding, wrong content type, and oversized responses;
