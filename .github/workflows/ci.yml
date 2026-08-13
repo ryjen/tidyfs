@@ -17,6 +17,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_FUZZ_VERSION: "0.13.2"
+  FUZZ_RUST_TOOLCHAIN: nightly-2026-08-12
 
 jobs:
   quality:
@@ -59,19 +61,24 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   fuzz:
-    name: AI proposal fuzz smoke
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: AI fuzz harness
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install nightly Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Install pinned nightly Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.FUZZ_RUST_TOOLCHAIN }}
 
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
+
+      - name: Build AI proposal fuzz target
+        run: cargo fuzz build ai_proposal_json
 
       - name: Fuzz AI proposal parsing and validation
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: cargo fuzz run ai_proposal_json -- -max_total_time=60
