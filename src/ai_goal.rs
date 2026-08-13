@@ -1,10 +1,10 @@
 use crate::ai::{
-    AiProvenance, AI_MAX_CAVEAT_ITEMS, AI_MAX_EXPLANATION_ITEM_BYTES, AI_MAX_PROVENANCE_FIELD_BYTES,
-    AI_MAX_RATIONALE_ITEMS,
+    AiProvenance, AI_MAX_CAVEAT_ITEMS, AI_MAX_EXPLANATION_ITEM_BYTES,
+    AI_MAX_PROVENANCE_FIELD_BYTES, AI_MAX_RATIONALE_ITEMS,
 };
 use crate::ai_contract::AiPathMode;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, hash_map::DefaultHasher};
+use std::collections::{hash_map::DefaultHasher, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -216,7 +216,10 @@ impl fmt::Display for AiGoalValidationError {
                 write!(f, "unsupported AI goal contract version: {version}")
             }
             Self::UnsupportedSchemaVersion(version) => {
-                write!(f, "unsupported AI goal recommendation schema version: {version}")
+                write!(
+                    f,
+                    "unsupported AI goal recommendation schema version: {version}"
+                )
             }
             Self::EmptyRequestId => write!(f, "AI goal request id must not be empty"),
             Self::UnexpectedTask => write!(f, "AI goal request task is invalid"),
@@ -231,8 +234,12 @@ impl fmt::Display for AiGoalValidationError {
                 "AI goal recommendation exceeds {AI_MAX_GOAL_CANDIDATES} selected candidates"
             ),
             Self::UnsafeConstraint => write!(f, "AI goal request grants unsupported authority"),
-            Self::PlanDigestMismatch => write!(f, "AI goal plan digest does not match request facts"),
-            Self::RequestIdMismatch => write!(f, "AI goal response request id does not match request"),
+            Self::PlanDigestMismatch => {
+                write!(f, "AI goal plan digest does not match request facts")
+            }
+            Self::RequestIdMismatch => {
+                write!(f, "AI goal response request id does not match request")
+            }
             Self::InvalidCandidateId => write!(f, "AI goal candidate id must be positive"),
             Self::DuplicateCandidateId(id) => {
                 write!(f, "AI goal request contains duplicate candidate id {id}")
@@ -245,15 +252,24 @@ impl fmt::Display for AiGoalValidationError {
             }
             Self::InvalidCandidateFacts => write!(f, "AI goal candidate facts are incomplete"),
             Self::MissingRationale => write!(f, "AI goal recommendation requires rationale"),
-            Self::TooManyRationaleItems => write!(f, "AI goal recommendation has too many rationale items"),
-            Self::RationaleItemTooLong => write!(f, "AI goal recommendation rationale item is too long"),
-            Self::TooManyCaveatItems => write!(f, "AI goal recommendation has too many caveat items"),
+            Self::TooManyRationaleItems => {
+                write!(f, "AI goal recommendation has too many rationale items")
+            }
+            Self::RationaleItemTooLong => {
+                write!(f, "AI goal recommendation rationale item is too long")
+            }
+            Self::TooManyCaveatItems => {
+                write!(f, "AI goal recommendation has too many caveat items")
+            }
             Self::CaveatItemTooLong => write!(f, "AI goal recommendation caveat item is too long"),
             Self::EmptyProvider => write!(f, "AI goal provenance provider must not be empty"),
             Self::EmptyModel => write!(f, "AI goal provenance model must not be empty"),
             Self::ProvenanceFieldTooLong => write!(f, "AI goal provenance field is too long"),
             Self::ProvenanceRequestIdMismatch => {
-                write!(f, "AI goal provenance request id does not match response request id")
+                write!(
+                    f,
+                    "AI goal provenance request id does not match response request id"
+                )
             }
         }
     }
@@ -307,18 +323,8 @@ pub fn goal_plan_digest(
     let mut ordered = candidates.to_vec();
     ordered.sort_by_key(|candidate| candidate.candidate_id);
 
-    let left = hash_goal_binding(
-        "tidyfs-ai-goal-v1:left",
-        scan_id,
-        &ordered,
-        constraints,
-    );
-    let right = hash_goal_binding(
-        "tidyfs-ai-goal-v1:right",
-        scan_id,
-        &ordered,
-        constraints,
-    );
+    let left = hash_goal_binding("tidyfs-ai-goal-v1:left", scan_id, &ordered, constraints);
+    let right = hash_goal_binding("tidyfs-ai-goal-v1:right", scan_id, &ordered, constraints);
     format!("goal-v1:{left:016x}{right:016x}")
 }
 
@@ -460,7 +466,8 @@ mod tests {
 
         let mut changed = request();
         changed.candidates[0].size_bytes += 1;
-        changed.plan_digest = goal_plan_digest(changed.scan_id, &changed.candidates, &changed.constraints);
+        changed.plan_digest =
+            goal_plan_digest(changed.scan_id, &changed.candidates, &changed.constraints);
         assert_ne!(left.plan_digest, changed.plan_digest);
 
         let mut changed_goal = request();
