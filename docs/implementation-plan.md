@@ -144,6 +144,29 @@ scan/index facts
 
 AI may preserve or reduce existing deterministic authority; it may not increase it.
 
+## Milestone 8: Goal-oriented advisory planning — first slice
+
+QART #51 selected goal-oriented advisory planning over existing deterministic candidates as the post-`v0.6.1` product direction. ADR 0001 records the authority boundary.
+
+The first slice adds a read-only recommendation workflow:
+
+```text
+persisted deterministic plan
+  -> unblocked reversible quarantine candidates
+  -> canonicalize one filesystem payload using its highest deterministic risk
+  -> root/risk filter + bounded reclaim target
+  -> /v1/recommend over explicit candidate IDs
+  -> strict request/provenance/plan binding validation
+  -> authoritative plan re-read after inference
+  -> selected-ID subset validation
+  -> tidyfs-computed reclaim bytes and target_met
+  -> read-only output
+```
+
+The model may choose only candidate IDs supplied by `tidyfs`. It cannot create candidates, lower deterministic risk, remove blocks, broaden the root, determine authoritative byte totals, persist executable authority, or trigger cleanup.
+
+The first slice intentionally uses a numeric reclaim target rather than a free-form natural-language goal. Recommendation output remains separate from `clean` and does not modify cleanup/action state.
+
 ## Current release baseline
 
 `v0.6.1` is the current validated public Linux release baseline.
@@ -157,16 +180,13 @@ The release record includes:
 - independent retained-artifact verification;
 - binary smoke tests.
 
-## Next milestone: decision pending
+## Deferred decisions
 
 Do not treat the old “AI explainer / Ollama/OpenAI-compatible client / ask command” section as an active implementation plan. The implemented provider boundary deliberately avoids coupling the core to a generic chat API or hosted-provider SDK.
 
-The post-`v0.6.1` product milestone is being decided in **QART #51**.
-
-The current recommendation is a bounded **goal-oriented advisory planning** layer over an existing deterministic plan, for workflows such as “what is the lowest-risk existing cleanup set that reclaims at least 20 GB?” The recommendation must remain structured, freshness-bound, independently validated, and non-authoritative for execution.
-
 Explicitly deferred until separately justified:
 
+- natural-language/free-form goal parsing;
 - non-loopback/remote model transport;
 - AI-generated enabled rules;
 - tool-native cleanup execution;
