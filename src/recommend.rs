@@ -190,17 +190,8 @@ fn load_eligible_candidates(
 
     let mut by_path: BTreeMap<PathBuf, Vec<PersistedCandidate>> = BTreeMap::new();
     for row in rows {
-        let (
-            id,
-            path,
-            raw_size,
-            rule_id,
-            category,
-            risk_text,
-            action_type,
-            reversible,
-            blocked,
-        ) = row?;
+        let (id, path, raw_size, rule_id, category, risk_text, action_type, reversible, blocked) =
+            row?;
         if root.is_some_and(|root| !path.starts_with(root)) {
             continue;
         }
