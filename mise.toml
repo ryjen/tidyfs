@@ -18,6 +18,10 @@ run = "cargo package --locked"
 description = "Run the deterministic CI quality gate locally"
 depends = ["static-analysis", "test", "package"]
 
+[tasks.fuzz-ai-build]
+description = "Build the AI proposal fuzz harness with the pinned nightly toolchain"
+run = "cargo +nightly-2026-08-12 fuzz build ai_proposal_json"
+
 [tasks.fuzz-ai]
 description = "Fuzz model-controlled AI proposal parsing and validation"
-run = "cargo fuzz run ai_proposal_json -- -max_total_time=30"
+run = "cargo +nightly-2026-08-12 fuzz run ai_proposal_json -- -max_total_time=30"
