@@ -131,22 +131,28 @@ This creates a one-way authority rule: **AI may preserve or reduce existing dete
 
 ## Goal-oriented advisory planning
 
-ADR 0001 accepts a second read-only AI task: selecting among already-eligible candidates in an existing persisted plan for a bounded reclaim target.
+ADR 0001 accepts a second read-only AI task: selecting among candidates in an existing persisted plan for a bounded reclaim target.
 
 ```text
 persisted cleanup_candidates
         |
         v
-filter: unblocked + reversible + quarantine + root
+scope to selected filesystem root
         |
         v
-canonicalize one row per filesystem path using highest deterministic risk
+canonicalize exact-path rule matches using highest deterministic risk
+        |
+        v
+suppress every ancestor that has any descendant candidate
+        |
+        v
+require leaf candidate to be unblocked + reversible + quarantine
         |
         v
 apply requested risk threshold
         |
         v
-bounded candidate IDs/facts + numeric reclaim target
+bounded non-overlapping candidate IDs/facts + numeric reclaim target
         |
         v
 opaque goal/plan freshness digest
@@ -170,13 +176,17 @@ tidyfs sums selected bytes and computes target_met
 read-only terminal output
 ```
 
-The model returns selected candidate IDs plus rationale/caveats. It does not own the byte total. `tidyfs` calculates reclaim bytes from the revalidated current plan and determines whether the target is met.
+The model returns selected candidate IDs plus rationale/caveats. It does not own the byte total. `tidyfs` calculates reclaim bytes from the revalidated current non-overlapping candidate set and determines whether the target is met.
 
-Multiple deterministic rules may match one path. Goal recommendation canonicalizes to one candidate row per path before applying the requested risk threshold, using the highest deterministic risk among otherwise eligible reversible quarantine matches. This prevents both double-counting and a lower-risk duplicate from hiding a higher-risk rule for the same filesystem payload.
+Multiple deterministic rules may match one path. Goal recommendation first collapses exact-path matches using the highest deterministic risk. Any blocked, non-reversible, or non-quarantine match for that exact path makes the path unavailable to this advisory slice. This prevents a lower-risk or more permissive duplicate from becoming the model-visible representative.
+
+The deterministic planner can also persist ancestor and descendant candidates independently. Counting or selecting both would count the same physical payload more than once. The first goal-recommendation slice therefore exposes only **leaf-most, pairwise non-overlapping filesystem paths**. The presence of any descendant candidate suppresses an ancestor even when the descendant is blocked or above the requested risk threshold. This prevents an ancestor from becoming an advisory shortcut around stricter child policy.
+
+This leaf-most rule is deliberately conservative. It can understate reclaimable bytes because bytes unique to a suppressed ancestor are not attributed to a leaf candidate. That can produce `target_met: false` even when a future hierarchy-aware deterministic planner could safely reclaim more. Undercounting is the fail-safe result for this read-only slice; double-counting or policy bypass is not acceptable. Core planner/executor hierarchy semantics are tracked separately in issue #62.
 
 The goal/plan digest is an opaque correlation and freshness binding, not an authentication token or capability. The authoritative stale-state defense is the post-inference persisted-plan re-read and exact comparison of the facts supplied to inference.
 
-Goal recommendations are not written back as cleanup authority. `clean` consumes the persisted deterministic plan under its existing risk, approval, identity, quarantine, and recovery rules.
+Goal recommendations are not written back as cleanup authority. `clean` consumes the persisted deterministic plan under its existing risk, approval, identity, quarantine, and recovery rules. Issue #62 tracks deterministic hierarchy canonicalization for plan totals, dry-run, and execution; this PR does not silently change those mutation semantics.
 
 ## Provider boundary
 
@@ -193,7 +203,7 @@ Content-Type: application/json
 Accept: application/json
 ```
 
-`/v1/analyze` handles one bound candidate observation. `/v1/recommend` handles a bounded goal plus an explicit set of already-eligible candidate IDs/facts.
+`/v1/analyze` handles one bound candidate observation. `/v1/recommend` handles a bounded goal plus an explicit set of already-eligible, non-overlapping candidate IDs/facts.
 
 Runtime constraints are shared:
 
@@ -255,7 +265,9 @@ Tests and integration behavior cover:
 - stale/nonexistent/changed candidates;
 - stale or changed persisted goal-plan facts;
 - unknown or duplicate goal-selected candidate IDs;
-- duplicate-path risk canonicalization and reclaim-byte deduplication;
+- exact-path risk canonicalization;
+- ancestor/descendant overlap suppression and reclaim-byte non-overlap;
+- stricter or blocked descendants suppressing ancestors from goal advice;
 - request-ID, provenance-ID, and digest mismatch;
 - non-loopback/hostname endpoint rejection;
 - redirects, transfer encoding, wrong content type, and oversized responses;
@@ -272,4 +284,4 @@ The safe failure mode for AI remains: **no accepted recommendation and no additi
 
 Goal-oriented advisory planning is the accepted post-`v0.6.1` direction. The first slice intentionally accepts a structured numeric reclaim target rather than a free-form goal.
 
-AI-generated disabled rule proposals, natural-language goal parsing, non-loopback transport, and tool-native cleanup execution remain separate future decisions.
+AI-generated disabled rule proposals, natural-language goal parsing, non-loopback transport, tool-native cleanup execution, and the full deterministic hierarchy policy from #62 remain separate future decisions.
