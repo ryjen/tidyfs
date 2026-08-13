@@ -14,6 +14,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_FUZZ_VERSION: "0.13.2"
+  FUZZ_RUST_TOOLCHAIN: nightly-2026-08-12
 
 jobs:
   quality:
@@ -31,13 +33,10 @@ jobs:
       - name: Cache Cargo data
         uses: Swatinem/rust-cache@v2
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Run static analysis
+        run: bash scripts/static-analysis.sh
 
-      - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Run tests
+      - name: Run deterministic tests
         run: cargo test --all-targets --all-features --locked
 
       - name: Verify Cargo package
@@ -57,3 +56,22 @@ jobs:
         uses: rustsec/audit-check@v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  fuzz-harness:
+    name: AI fuzz harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned nightly Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.FUZZ_RUST_TOOLCHAIN }}
+
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
+
+      - name: Build AI proposal fuzz target
+        run: cargo fuzz build ai_proposal_json

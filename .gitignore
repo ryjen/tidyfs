@@ -1,4 +1,6 @@
 /target
+/fuzz/target
+/fuzz/artifacts
 *.db
 *.sqlite
 .DS_Store

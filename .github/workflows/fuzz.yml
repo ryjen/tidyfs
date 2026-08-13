@@ -1,0 +1,50 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: "17 4 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_FUZZ_VERSION: "0.13.2"
+  FUZZ_RUST_TOOLCHAIN: nightly-2026-08-12
+
+jobs:
+  ai-proposal:
+    name: AI proposal fuzz smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned nightly Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.FUZZ_RUST_TOOLCHAIN }}
+
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
+
+      - name: Build AI proposal fuzz target
+        run: cargo fuzz build ai_proposal_json
+
+      - name: Fuzz AI proposal parsing and validation
+        run: cargo fuzz run ai_proposal_json -- -max_total_time=60
+
+      - name: Preserve fuzz failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ai-proposal-fuzz-artifacts-${{ github.run_id }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
