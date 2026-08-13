@@ -152,10 +152,13 @@ The first slice adds a read-only recommendation workflow:
 
 ```text
 persisted deterministic plan
-  -> unblocked reversible quarantine candidates
-  -> canonicalize one filesystem payload using its highest deterministic risk
-  -> root/risk filter + bounded reclaim target
-  -> /v1/recommend over explicit candidate IDs
+  -> selected filesystem root
+  -> exact-path canonicalization using highest deterministic risk
+  -> suppress ancestors that contain any descendant candidate
+  -> require leaf path to be unblocked + reversible + quarantine
+  -> apply requested risk threshold
+  -> bounded reclaim target + non-overlapping candidate IDs
+  -> /v1/recommend
   -> strict request/provenance/plan binding validation
   -> authoritative plan re-read after inference
   -> selected-ID subset validation
@@ -164,6 +167,10 @@ persisted deterministic plan
 ```
 
 The model may choose only candidate IDs supplied by `tidyfs`. It cannot create candidates, lower deterministic risk, remove blocks, broaden the root, determine authoritative byte totals, persist executable authority, or trigger cleanup.
+
+The first slice intentionally exposes only leaf-most, pairwise non-overlapping filesystem paths. A descendant candidate suppresses its ancestor even when the descendant is blocked or above the requested risk threshold. This can conservatively undercount reclaimable bytes, but it avoids double-counting and prevents an ancestor recommendation from bypassing stricter child policy.
+
+The deterministic planner/executor still needs one shared hierarchy policy for plan totals, dry-run, and execution. That broader correctness work is tracked in #62 rather than being coupled to this read-only AI slice.
 
 The first slice intentionally uses a numeric reclaim target rather than a free-form natural-language goal. Recommendation output remains separate from `clean` and does not modify cleanup/action state.
 
@@ -186,6 +193,7 @@ Do not treat the old “AI explainer / Ollama/OpenAI-compatible client / ask com
 
 Explicitly deferred until separately justified:
 
+- deterministic hierarchy canonicalization across plan/clean (#62);
 - natural-language/free-form goal parsing;
 - non-loopback/remote model transport;
 - AI-generated enabled rules;
