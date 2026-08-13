@@ -37,6 +37,19 @@ struct PlanCandidate {
     risk: Risk,
 }
 
+#[derive(Debug, Clone)]
+struct PersistedCandidate {
+    id: i64,
+    path: PathBuf,
+    size_bytes: u64,
+    rule_id: String,
+    category: String,
+    risk: Risk,
+    action_type: String,
+    reversible: bool,
+    blocked: bool,
+}
+
 pub fn run_recommend(database: &Database, query: RecommendQuery) -> Result<()> {
     validate_query(&query)?;
 
@@ -66,7 +79,7 @@ pub fn run_recommend(database: &Database, query: RecommendQuery) -> Result<()> {
         query.limit,
     )?;
     if original.is_empty() {
-        bail!("no eligible reversible quarantine candidates found; run `tidyfs plan --safe` first");
+        bail!("no eligible non-overlapping reversible quarantine candidates found; run `tidyfs plan --safe` first");
     }
 
     let contract_candidates = build_contract_candidates(&original, query.path_mode);
@@ -152,20 +165,12 @@ fn load_eligible_candidates(
 ) -> Result<Vec<PlanCandidate>> {
     let mut stmt = database.connection().prepare(
         r#"
-        SELECT id, path, size_bytes, rule_id, category, risk, action_type, reversible
+        SELECT
+          id, path, size_bytes, rule_id, category, risk,
+          action_type, reversible, blocked
         FROM cleanup_candidates
         WHERE scan_id = ?1
-          AND blocked = 0
-        ORDER BY path ASC,
-          CASE risk
-            WHEN 'forbidden' THEN 0
-            WHEN 'high' THEN 1
-            WHEN 'medium' THEN 2
-            WHEN 'low' THEN 3
-            ELSE 4
-          END ASC,
-          rule_id ASC,
-          id ASC
+        ORDER BY path ASC, rule_id ASC, id ASC
         "#,
     )?;
 
@@ -179,40 +184,109 @@ fn load_eligible_candidates(
             row.get::<_, String>(5)?,
             row.get::<_, String>(6)?,
             row.get::<_, i64>(7)? != 0,
+            row.get::<_, i64>(8)? != 0,
         ))
     })?;
 
-    // A path can match more than one deterministic rule. Recommendation byte totals
-    // describe unique filesystem payloads, so retain one canonical row per path.
-    // Canonicalize before applying the user risk threshold so a lower-risk duplicate
-    // cannot hide a higher-risk deterministic match for the same payload.
-    let mut by_path: BTreeMap<PathBuf, PlanCandidate> = BTreeMap::new();
+    let mut by_path: BTreeMap<PathBuf, Vec<PersistedCandidate>> = BTreeMap::new();
     for row in rows {
-        let (id, path, raw_size, rule_id, category, risk_text, action_type, reversible) = row?;
+        let (
+            id,
+            path,
+            raw_size,
+            rule_id,
+            category,
+            risk_text,
+            action_type,
+            reversible,
+            blocked,
+        ) = row?;
+        if root.is_some_and(|root| !path.starts_with(root)) {
+            continue;
+        }
+        if raw_size < 0 {
+            bail!("persisted cleanup candidate {id} has negative size");
+        }
         let risk = parse_risk(&risk_text)
             .with_context(|| format!("invalid persisted cleanup risk for candidate {id}"))?;
-        if raw_size < 0
-            || !reversible
-            || action_type != "quarantine"
-            || root.is_some_and(|root| !path.starts_with(root))
+        by_path
+            .entry(path.clone())
+            .or_default()
+            .push(PersistedCandidate {
+                id,
+                path,
+                size_bytes: raw_size as u64,
+                rule_id,
+                category,
+                risk,
+                action_type,
+                reversible,
+                blocked,
+            });
+    }
+
+    let filesystem_paths: Vec<_> = by_path
+        .keys()
+        .filter(|path| !path.to_string_lossy().starts_with("adapter://"))
+        .cloned()
+        .collect();
+
+    let mut candidates = Vec::new();
+    for (path, rows) in &by_path {
+        if path.to_string_lossy().starts_with("adapter://") {
+            continue;
+        }
+
+        // The deterministic planner may persist both an ancestor and descendants as
+        // independent candidates. Sending both would double-count reclaimable bytes.
+        // Keep only leaf-most paths. A descendant that is blocked or above the requested
+        // threshold still suppresses its ancestor so the ancestor cannot bypass stricter
+        // policy attached to data it contains.
+        if filesystem_paths
+            .iter()
+            .any(|other| other != path && other.starts_with(path))
         {
             continue;
         }
 
-        by_path.entry(path.clone()).or_insert(PlanCandidate {
-            id,
-            path,
-            size_bytes: raw_size as u64,
-            rule_id,
-            category,
-            risk,
+        let effective_risk = rows
+            .iter()
+            .map(|candidate| candidate.risk)
+            .max()
+            .context("persisted cleanup candidate group is unexpectedly empty")?;
+
+        if rows.iter().any(|candidate| {
+            candidate.blocked || !candidate.reversible || candidate.action_type != "quarantine"
+        }) || !rules::risk_allows(effective_risk, max_risk)
+        {
+            continue;
+        }
+
+        let representative = rows
+            .iter()
+            .filter(|candidate| candidate.risk == effective_risk)
+            .min_by(|left, right| {
+                left.rule_id
+                    .cmp(&right.rule_id)
+                    .then_with(|| left.id.cmp(&right.id))
+            })
+            .context("missing representative cleanup candidate")?;
+        let size_bytes = rows
+            .iter()
+            .map(|candidate| candidate.size_bytes)
+            .max()
+            .unwrap_or(0);
+
+        candidates.push(PlanCandidate {
+            id: representative.id,
+            path: representative.path.clone(),
+            size_bytes,
+            rule_id: representative.rule_id.clone(),
+            category: representative.category.clone(),
+            risk: effective_risk,
         });
     }
 
-    let mut candidates: Vec<_> = by_path
-        .into_values()
-        .filter(|candidate| rules::risk_allows(candidate.risk, max_risk))
-        .collect();
     candidates.sort_by(|left, right| {
         right
             .size_bytes
@@ -575,6 +649,72 @@ mod tests {
             "quarantine",
             true,
             false,
+        );
+
+        let candidates = load_eligible_candidates(&database, 42, None, Risk::Low, 100).unwrap();
+        assert!(candidates.is_empty());
+        drop(database);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn nested_candidates_offer_only_leaf_paths() {
+        let (database, path) = seeded_database("nested");
+        insert_candidate(
+            &database,
+            1,
+            "/tmp/tidyfs-root/cache",
+            1_000,
+            "parent",
+            "low",
+            "quarantine",
+            true,
+            false,
+        );
+        insert_candidate(
+            &database,
+            2,
+            "/tmp/tidyfs-root/cache/sub",
+            400,
+            "child",
+            "low",
+            "quarantine",
+            true,
+            false,
+        );
+
+        let candidates = load_eligible_candidates(&database, 42, None, Risk::Low, 100).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].id, 2);
+        assert_eq!(candidates[0].size_bytes, 400);
+        drop(database);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn stricter_descendant_suppresses_ancestor() {
+        let (database, path) = seeded_database("nested-risk");
+        insert_candidate(
+            &database,
+            1,
+            "/tmp/tidyfs-root/cache",
+            1_000,
+            "parent",
+            "low",
+            "quarantine",
+            true,
+            false,
+        );
+        insert_candidate(
+            &database,
+            2,
+            "/tmp/tidyfs-root/cache/sub",
+            400,
+            "child",
+            "medium",
+            "quarantine",
+            true,
+            true,
         );
 
         let candidates = load_eligible_candidates(&database, 42, None, Risk::Low, 100).unwrap();
