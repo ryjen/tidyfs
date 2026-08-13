@@ -28,6 +28,15 @@ cargo install cargo-audit --locked
 mise run audit
 ```
 
+For fuzzing, install the same pinned nightly toolchain and `cargo-fuzz` version used by CI:
+
+```bash
+rustup toolchain install nightly-2026-08-12
+cargo install cargo-fuzz --version 0.13.2 --locked
+mise run fuzz-ai-build
+mise run fuzz-ai
+```
+
 See `docs/testing.md` for the test pyramid, fuzzing policy, and AI-specific testing guidance.
 
 ## Safety boundary
@@ -59,5 +68,6 @@ The stable CI checks intended for branch protection are:
 
 - `Rust quality`
 - `Dependency audit`
+- `AI fuzz harness`
 
-The scheduled/manual `AI proposal fuzz smoke` job is exploratory and is not intended as a pull-request branch-protection check.
+On pull requests, `AI fuzz harness` only performs a deterministic build of the fuzz target. Coverage-guided fuzz execution remains scheduled/manual and is not part of the pull-request branch-protection gate.
