@@ -183,9 +183,9 @@ fn load_eligible_candidates(
     })?;
 
     // A path can match more than one deterministic rule. Recommendation byte totals
-    // describe unique filesystem payloads, so retain one canonical eligible row per path.
-    // The canonical row is the highest-risk eligible match so deduplication cannot lower
-    // deterministic authority.
+    // describe unique filesystem payloads, so retain one canonical row per path.
+    // Canonicalize before applying the user risk threshold so a lower-risk duplicate
+    // cannot hide a higher-risk deterministic match for the same payload.
     let mut by_path: BTreeMap<PathBuf, PlanCandidate> = BTreeMap::new();
     for row in rows {
         let (id, path, raw_size, rule_id, category, risk_text, action_type, reversible) = row?;
@@ -194,7 +194,6 @@ fn load_eligible_candidates(
         if raw_size < 0
             || !reversible
             || action_type != "quarantine"
-            || !rules::risk_allows(risk, max_risk)
             || root.is_some_and(|root| !path.starts_with(root))
         {
             continue;
@@ -210,7 +209,10 @@ fn load_eligible_candidates(
         });
     }
 
-    let mut candidates: Vec<_> = by_path.into_values().collect();
+    let mut candidates: Vec<_> = by_path
+        .into_values()
+        .filter(|candidate| rules::risk_allows(candidate.risk, max_risk))
+        .collect();
     candidates.sort_by(|left, right| {
         right
             .size_bytes
@@ -447,70 +449,14 @@ mod tests {
     #[test]
     fn eligible_plan_excludes_blocked_non_reversible_tool_and_over_risk_rows() {
         let (database, path) = seeded_database("eligible");
-        insert_candidate(
-            &database,
-            1,
-            "/tmp/tidyfs-root/a",
-            100,
-            "a",
-            "low",
-            "quarantine",
-            true,
-            false,
-        );
-        insert_candidate(
-            &database,
-            2,
-            "/tmp/tidyfs-root/b",
-            200,
-            "b",
-            "low",
-            "tool_native",
-            true,
-            false,
-        );
-        insert_candidate(
-            &database,
-            3,
-            "/tmp/tidyfs-root/c",
-            300,
-            "c",
-            "low",
-            "quarantine",
-            false,
-            false,
-        );
-        insert_candidate(
-            &database,
-            4,
-            "/tmp/tidyfs-root/d",
-            400,
-            "d",
-            "low",
-            "quarantine",
-            true,
-            true,
-        );
-        insert_candidate(
-            &database,
-            5,
-            "/tmp/tidyfs-root/e",
-            500,
-            "e",
-            "medium",
-            "quarantine",
-            true,
-            false,
-        );
+        insert_candidate(&database, 1, "/tmp/tidyfs-root/a", 100, "a", "low", "quarantine", true, false);
+        insert_candidate(&database, 2, "/tmp/tidyfs-root/b", 200, "b", "low", "tool_native", true, false);
+        insert_candidate(&database, 3, "/tmp/tidyfs-root/c", 300, "c", "low", "quarantine", false, false);
+        insert_candidate(&database, 4, "/tmp/tidyfs-root/d", 400, "d", "low", "quarantine", true, true);
+        insert_candidate(&database, 5, "/tmp/tidyfs-root/e", 500, "e", "medium", "quarantine", true, false);
 
         let candidates = load_eligible_candidates(&database, 42, None, Risk::Low, 100).unwrap();
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|candidate| candidate.id)
-                .collect::<Vec<_>>(),
-            vec![1]
-        );
+        assert_eq!(candidates.iter().map(|candidate| candidate.id).collect::<Vec<_>>(), vec![1]);
         drop(database);
         let _ = std::fs::remove_file(path);
     }
@@ -518,28 +464,8 @@ mod tests {
     #[test]
     fn eligible_plan_counts_each_path_once_and_preserves_highest_risk() {
         let (database, path) = seeded_database("dedup");
-        insert_candidate(
-            &database,
-            1,
-            "/tmp/tidyfs-root/cache",
-            100,
-            "medium-rule",
-            "medium",
-            "quarantine",
-            true,
-            false,
-        );
-        insert_candidate(
-            &database,
-            2,
-            "/tmp/tidyfs-root/cache",
-            100,
-            "low-rule",
-            "low",
-            "quarantine",
-            true,
-            false,
-        );
+        insert_candidate(&database, 1, "/tmp/tidyfs-root/cache", 100, "medium-rule", "medium", "quarantine", true, false);
+        insert_candidate(&database, 2, "/tmp/tidyfs-root/cache", 100, "low-rule", "low", "quarantine", true, false);
 
         let candidates = load_eligible_candidates(&database, 42, None, Risk::Medium, 100).unwrap();
         assert_eq!(candidates.len(), 1);
@@ -552,28 +478,8 @@ mod tests {
     #[test]
     fn duplicate_path_with_higher_risk_is_not_available_under_lower_threshold() {
         let (database, path) = seeded_database("dedup-threshold");
-        insert_candidate(
-            &database,
-            1,
-            "/tmp/tidyfs-root/cache",
-            100,
-            "medium-rule",
-            "medium",
-            "quarantine",
-            true,
-            false,
-        );
-        insert_candidate(
-            &database,
-            2,
-            "/tmp/tidyfs-root/cache",
-            100,
-            "low-rule",
-            "low",
-            "quarantine",
-            true,
-            false,
-        );
+        insert_candidate(&database, 1, "/tmp/tidyfs-root/cache", 100, "medium-rule", "medium", "quarantine", true, false);
+        insert_candidate(&database, 2, "/tmp/tidyfs-root/cache", 100, "low-rule", "low", "quarantine", true, false);
 
         let candidates = load_eligible_candidates(&database, 42, None, Risk::Low, 100).unwrap();
         assert!(candidates.is_empty());
@@ -584,32 +490,11 @@ mod tests {
     #[test]
     fn eligible_plan_respects_root_filter() {
         let (database, path) = seeded_database("root-filter");
-        insert_candidate(
-            &database,
-            1,
-            "/tmp/tidyfs-root/in/a",
-            100,
-            "in",
-            "low",
-            "quarantine",
-            true,
-            false,
-        );
-        insert_candidate(
-            &database,
-            2,
-            "/tmp/tidyfs-root/out/b",
-            200,
-            "out",
-            "low",
-            "quarantine",
-            true,
-            false,
-        );
+        insert_candidate(&database, 1, "/tmp/tidyfs-root/in/a", 100, "in", "low", "quarantine", true, false);
+        insert_candidate(&database, 2, "/tmp/tidyfs-root/out/b", 200, "out", "low", "quarantine", true, false);
 
         let root = Path::new("/tmp/tidyfs-root/in");
-        let candidates =
-            load_eligible_candidates(&database, 42, Some(root), Risk::Low, 100).unwrap();
+        let candidates = load_eligible_candidates(&database, 42, Some(root), Risk::Low, 100).unwrap();
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].id, 1);
         drop(database);
@@ -627,14 +512,7 @@ mod tests {
             risk: Risk::Low,
         }];
         let original = build_contract_candidates(&candidates, AiPathMode::Redacted);
-        let request = AiGoalRequest::new(
-            "req".to_owned(),
-            42,
-            original.clone(),
-            50,
-            "low".to_owned(),
-            None,
-        );
+        let request = AiGoalRequest::new("req".to_owned(), 42, original.clone(), 50, "low".to_owned(), None);
         let mut changed = original.clone();
         changed[0].size_bytes += 1;
         assert!(verify_plan_is_current(&request, &original, &changed).is_err());
@@ -664,17 +542,7 @@ mod tests {
     #[test]
     fn recommend_round_trip_does_not_mutate_plan_or_actions() {
         let (database, path) = seeded_database("roundtrip");
-        insert_candidate(
-            &database,
-            7,
-            "/tmp/tidyfs-root/.cache/pip",
-            4096,
-            "pip-cache",
-            "low",
-            "quarantine",
-            true,
-            false,
-        );
+        insert_candidate(&database, 7, "/tmp/tidyfs-root/.cache/pip", 4096, "pip-cache", "low", "quarantine", true, false);
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake gateway");
         let address = listener.local_addr().expect("local address");
@@ -701,16 +569,8 @@ mod tests {
             write_json_response(&mut stream, &serde_json::to_vec(&response).unwrap());
         });
 
-        let before_candidates: i64 = database
-            .connection()
-            .query_row("SELECT COUNT(*) FROM cleanup_candidates", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        let before_actions: i64 = database
-            .connection()
-            .query_row("SELECT COUNT(*) FROM actions", [], |row| row.get(0))
-            .unwrap();
+        let before_candidates: i64 = database.connection().query_row("SELECT COUNT(*) FROM cleanup_candidates", [], |row| row.get(0)).unwrap();
+        let before_actions: i64 = database.connection().query_row("SELECT COUNT(*) FROM actions", [], |row| row.get(0)).unwrap();
 
         run_recommend(
             &database,
@@ -730,16 +590,8 @@ mod tests {
         .expect("read-only recommendation");
         server.join().unwrap();
 
-        let after_candidates: i64 = database
-            .connection()
-            .query_row("SELECT COUNT(*) FROM cleanup_candidates", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        let after_actions: i64 = database
-            .connection()
-            .query_row("SELECT COUNT(*) FROM actions", [], |row| row.get(0))
-            .unwrap();
+        let after_candidates: i64 = database.connection().query_row("SELECT COUNT(*) FROM cleanup_candidates", [], |row| row.get(0)).unwrap();
+        let after_actions: i64 = database.connection().query_row("SELECT COUNT(*) FROM actions", [], |row| row.get(0)).unwrap();
         assert_eq!(before_candidates, after_candidates);
         assert_eq!(before_actions, after_actions);
 
