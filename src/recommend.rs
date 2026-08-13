@@ -374,9 +374,9 @@ fn print_recommendation(
     println!("Goal-oriented cleanup recommendation");
     println!();
     println!("scan_id: {scan_id}");
-    println!("scan_root: {}", scan_root.display());
+    println!("scan_root: {}", terminal_path(scan_root));
     if let Some(root) = root_filter {
-        println!("filter_root: {}", root.display());
+        println!("filter_root: {}", terminal_path(root));
     }
     println!("risk_threshold: {}", query.max_risk);
     println!("path_mode: {}", ai_facts::path_mode_name(query.path_mode));
@@ -404,7 +404,7 @@ fn print_recommendation(
                 "  id={}  {:>10}  {}",
                 candidate.id,
                 util::format_bytes(candidate.size_bytes),
-                candidate.path.display()
+                terminal_path(&candidate.path)
             );
             println!("           rule: {}", candidate.rule_id);
             println!("           risk: {}", candidate.risk);
@@ -433,6 +433,10 @@ fn print_recommendation(
     println!();
     println!("Recommendation only. No filesystem changes were made.");
     println!("Run and inspect a deterministic plan/clean flow separately before any cleanup.");
+}
+
+fn terminal_path(path: &Path) -> String {
+    util::terminal_safe(path.to_string_lossy().as_ref())
 }
 
 fn parse_risk(value: &str) -> Result<Risk> {
