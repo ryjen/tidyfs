@@ -1,159 +1,85 @@
-# Implementation Plan
+# Implementation and Delivery Roadmap
 
-The implementation should proceed vertically, with a working deterministic core before adapters or AI.
+`tidyfs` is developed in vertical slices that preserve a deterministic, useful core while adding reversible execution, tool-native inspection, and optional AI advisory behavior around that core.
 
-## Milestone 1: Analyzer spine
+This document records **delivered milestones and current sequencing**. Detailed security and recovery invariants live in `threat-model.md`, `safety-model.md`, and `recovery.md`.
+
+## Milestone 1: Analyzer spine — complete
 
 Goal: replace basic `du` for common developer-machine inspection.
 
-Build:
+Delivered:
 
-- Rust CLI scaffold
-- `scan` command
+- Rust CLI
+- recursive `scan`
 - SQLite index
 - directory aggregation
-- `top` command
-- permission error handling
+- `top`
+- permission-error handling
+- repeatable scan metadata
 
-Commands:
+## Milestone 2: Deterministic classification — complete
 
-```bash
-tidyfs scan ~
-tidyfs top
-tidyfs top --depth 3
-```
+Goal: identify known filesystem categories without requiring AI.
 
-Success criteria:
+Delivered:
 
-- can scan `$HOME`
-- can tolerate permission errors
-- can show largest directories
-- does not delete anything
-- stores repeatable scan metadata
+- deterministic path classification
+- classification persistence
+- protected/sensitive categories
+- `classify`
+- `explain`
 
-## Milestone 2: Classification
+## Milestone 3: Rule engine and planner — complete
 
-Goal: identify known filesystem categories.
+Goal: generate deterministic cleanup proposals under explicit policy.
 
-Build:
+Delivered:
 
-- path classifier
-- classification table
-- `explain` command
-- protected path detection
-
-Initial labels:
-
-```text
-cache
-thumbnail_cache
-browser_cache
-browser_profile
-trash
-node_cache
-node_dependencies
-python_cache
-rust_cache
-rust_build_artifacts
-go_cache
-gradle_cache
-maven_cache
-docker_data
-podman_data
-nix_store
-systemd_journal
-source_repo
-git_repo
-database
-vm_image
-secret_material
-unknown
-```
-
-Commands:
-
-```bash
-tidyfs explain ~/.cache
-tidyfs explain ~/src/foo/node_modules
-```
-
-## Milestone 3: Rule engine and planner
-
-Goal: generate cleanup proposals.
-
-Build:
-
-- YAML rule loader
+- YAML rules
 - path/glob matchers
 - risk tiers
-- policy config
-- `plan` command
+- protected-category and action policy
+- `plan`
 - blocked candidate reporting
+- deterministic risk-threshold handling
 
-Commands:
-
-```bash
-tidyfs plan --safe
-tidyfs plan --risk medium
-```
-
-Initial rules:
-
-- old trash
-- old thumbnails
-- old generic cache entries
-- old pip cache
-- old npm cache
-- inactive `node_modules` with lockfile
-- inactive Rust `target`
-- report-only Docker data
-- report-only Nix store opportunity
-- report-only large DB/VM files
-
-## Milestone 4: Dry-run cleaner
+## Milestone 4: Exact dry-run — complete
 
 Goal: preview cleanup without touching files.
 
-Build:
+Delivered:
 
 - `clean --dry-run`
-- exact action preview
-- candidate selection
-- audit preview
+- exact candidate/action preview
+- risk-aware candidate selection
+- no filesystem mutation
 
-Command:
+## Milestone 5: Reversible execution and recovery — complete
 
-```bash
-tidyfs clean --dry-run
-```
+Goal: permit real cleanup without permanent deletion and remain recoverable across failures.
 
-## Milestone 5: Reversible execution
+Delivered:
 
-Goal: safe cleanup with undo.
+- explicit `--safe --interactive` execution gate
+- same-filesystem quarantine
+- durable action states
+- payload identity verification
+- source device/inode and symlink/path-substitution checks
+- serialized mutation lock
+- explicit interrupted-action detection
+- `recover`
+- atomic no-overwrite `restore` on supported platforms
+- failure-injection integration coverage
+- no permanent deletion
 
-Build:
+The residual pathname TOCTOU limitation is documented rather than represented as eliminated.
 
-- OS trash support
-- `tidyfs` quarantine
-- manifest generation
-- audit log
-- restore command
-- interactive approval
+## Milestone 6: Tool-native inspection — complete
 
-Commands:
+Goal: reason about tool-owned data without treating it as raw filesystem cleanup.
 
-```bash
-tidyfs clean --safe --interactive
-tidyfs restore
-```
-
-No permanent deletion.
-
-## Milestone 6: Tool adapters
-
-Goal: summarize and propose tool-native cleanup.
-
-Initial adapters:
+Delivered read-only adapters:
 
 - systemd journal
 - Docker
@@ -163,68 +89,101 @@ Initial adapters:
 - pip
 - uv
 - Go
-- Cargo report-only
 
-Commands:
+Adapter candidates remain `tool_native` and non-executable. `tidyfs` shows preview/reclaim information and suggested native commands but does not execute them.
 
-```bash
-tidyfs adapters
-tidyfs plan --include-adapters
-```
+## Milestone 6.1: Parallel scanning and packaging/release baseline — complete
 
-## Milestone 7: Optional AI explainer
+Delivered:
 
-Goal: explain validated plans and answer scan questions.
+- parallel immediate-subtree scanning with a single SQLite writer
+- Cargo package verification
+- dual MIT/Apache licensing artifacts
+- formatting, Clippy, tests, package verification, and RustSec CI gates
+- deterministic Linux release bundle construction
+- tag/version binding
+- isolated write-scoped GitHub Release publication
+- exact-tag manual recovery entrypoint for intentional existing tags
+- independently validated `v0.6.1` Linux artifact and checksum
 
-Build:
+## Milestone 7: AI advisory analysis and conservative planning — complete
 
-- Ollama/OpenAI-compatible client abstraction
-- redaction layer
-- structured AI input
-- structured AI output validation
-- `ask` command
+The original roadmap described an “optional AI explainer.” The delivered architecture is intentionally stronger and narrower: AI is a structured advisory layer over authoritative filesystem facts, while deterministic policy remains the mutation authority.
 
-Commands:
+Delivered:
 
-```bash
-tidyfs ask "why is my home directory so large?"
-tidyfs ask "what can I clean safely to reclaim 20GB?"
-tidyfs explain ~/.cache --ai
-```
+- versioned `AiCleanupProposal` contract
+- provider-neutral `AiAnalysisProvider` port
+- canonical bounded observation encoding and SHA-256 freshness binding
+- numeric-loopback `/v1/analyze` gateway adapter
+- strict request/response correlation and bounded transport
+- `full`, `basename`, and `redacted` path privacy modes
+- read-only `tidyfs analyze`
+- conservative AI enrichment of already-eligible deterministic quarantine candidates
+- post-inference authoritative observation reconstruction
+- stale recommendation rejection
+- effective-risk revalidation
+- persisted advisory rationale/confidence/provenance/digest evidence
+- `explain` freshness reporting
+- fail-closed provider and schema behavior
+- no AI mutation primitive, arbitrary shell, adapter execution, or permanent deletion
 
-## Suggested initial Rust dependencies
-
-```toml
-[dependencies]
-clap = { version = "4", features = ["derive"] }
-jwalk = "0.8"
-walkdir = "2"
-ignore = "0.4"
-globset = "0.4"
-rusqlite = { version = "0.32", features = ["bundled"] }
-serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
-serde_json = "1"
-anyhow = "1"
-thiserror = "1"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-humansize = "2"
-humantime = "2"
-dirs = "5"
-trash = "5"
-inquire = "0.7"
-blake3 = "1"
-```
-
-## First vertical slice
-
-Implement only this first:
+The authority chain is:
 
 ```text
-scan -> SQLite -> top -> classify -> plan --safe
+scan/index facts
+  -> deterministic classification/rules/policy
+  -> optional bounded AI advice
+  -> strict validation
+  -> authoritative observation revalidation
+  -> conservative conflict resolution
+  -> selected user risk threshold
+  -> dry-run / explicit approval
+  -> reversible quarantine
 ```
 
-No adapters, no AI, no delete.
+AI may preserve or reduce existing deterministic authority; it may not increase it.
 
-That gives the project a stable spine before adding complexity.
+## Current release baseline
+
+`v0.6.1` is the current validated public Linux release baseline.
+
+The release record includes:
+
+- a green `main` tag point;
+- deterministic archive contents;
+- SHA-256 checksum verification;
+- successful GitHub Release publication;
+- independent retained-artifact verification;
+- binary smoke tests.
+
+## Next milestone: decision pending
+
+Do not treat the old “AI explainer / Ollama/OpenAI-compatible client / ask command” section as an active implementation plan. The implemented provider boundary deliberately avoids coupling the core to a generic chat API or hosted-provider SDK.
+
+The post-`v0.6.1` product milestone is being decided in **QART #51**.
+
+The current recommendation is a bounded **goal-oriented advisory planning** layer over an existing deterministic plan, for workflows such as “what is the lowest-risk existing cleanup set that reclaims at least 20 GB?” The recommendation must remain structured, freshness-bound, independently validated, and non-authoritative for execution.
+
+Explicitly deferred until separately justified:
+
+- non-loopback/remote model transport;
+- AI-generated enabled rules;
+- tool-native cleanup execution;
+- permanent deletion;
+- broader model/tool authority.
+
+## Delivery rule for future milestones
+
+Prefer the smallest vertical slice that produces an observable user outcome while preserving current invariants:
+
+```text
+contract / decision
+  -> read-only behavior
+  -> deterministic validation
+  -> failure-path tests
+  -> integration with existing planner
+  -> only then consider new mutation authority
+```
+
+Any new mutation, command-execution, remote-trust, or credential boundary requires focused design/security review rather than being smuggled into an otherwise advisory feature.
