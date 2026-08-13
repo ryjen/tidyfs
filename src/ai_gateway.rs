@@ -470,7 +470,9 @@ mod tests {
             max_request_bytes: 16 * 1024,
             max_response_bytes: 16 * 1024,
         });
-        let recommendation = provider.recommend_goal(&request).expect("valid recommendation");
+        let recommendation = provider
+            .recommend_goal(&request)
+            .expect("valid recommendation");
         assert_eq!(recommendation.selected_candidate_ids, vec![7]);
         server.join().unwrap();
     }
