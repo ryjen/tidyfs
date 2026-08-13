@@ -213,7 +213,7 @@ fn merge_candidate(grouped: &mut BTreeMap<PathBuf, IndexedCandidate>, row: Candi
         });
 }
 
-fn privacy_path(path: &Path, mode: AiPathMode) -> String {
+pub(crate) fn privacy_path(path: &Path, mode: AiPathMode) -> String {
     match mode {
         AiPathMode::Full => path.to_string_lossy().into_owned(),
         AiPathMode::Basename => path
