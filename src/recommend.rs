@@ -7,9 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tidyfs::ai_contract::AiPathMode;
-use tidyfs::ai_gateway::{
-    new_gateway_request_id, LoopbackGatewayConfig, LoopbackGatewayProvider,
-};
+use tidyfs::ai_gateway::{new_gateway_request_id, LoopbackGatewayConfig, LoopbackGatewayProvider};
 use tidyfs::ai_goal::{
     goal_plan_digest, AiGoalCandidate, AiGoalConstraints, AiGoalRecommendation, AiGoalRequest,
     AI_MAX_GOAL_CANDIDATES,
@@ -68,9 +66,7 @@ pub fn run_recommend(database: &Database, query: RecommendQuery) -> Result<()> {
         query.limit,
     )?;
     if original.is_empty() {
-        bail!(
-            "no eligible reversible quarantine candidates found; run `tidyfs plan --safe` first"
-        );
+        bail!("no eligible reversible quarantine candidates found; run `tidyfs plan --safe` first");
     }
 
     let contract_candidates = build_contract_candidates(&original, query.path_mode);
@@ -136,9 +132,7 @@ fn validate_query(query: &RecommendQuery) -> Result<()> {
         bail!("recommend --target-bytes must be greater than zero");
     }
     if query.limit == 0 || query.limit > AI_MAX_GOAL_CANDIDATES {
-        bail!(
-            "recommend --limit must be between 1 and {AI_MAX_GOAL_CANDIDATES}"
-        );
+        bail!("recommend --limit must be between 1 and {AI_MAX_GOAL_CANDIDATES}");
     }
     if query.connect_timeout_ms == 0 || query.timeout_ms == 0 {
         bail!("AI gateway timeouts must be greater than zero");
@@ -260,16 +254,19 @@ fn select_recommended_candidates<'a>(
     current: &'a [PlanCandidate],
     recommendation: &AiGoalRecommendation,
 ) -> Result<Vec<&'a PlanCandidate>> {
-    let by_id: BTreeMap<_, _> = current.iter().map(|candidate| (candidate.id, candidate)).collect();
+    let by_id: BTreeMap<_, _> = current
+        .iter()
+        .map(|candidate| (candidate.id, candidate))
+        .collect();
     let mut seen = BTreeSet::new();
     let mut selected = Vec::with_capacity(recommendation.selected_candidate_ids.len());
     for id in &recommendation.selected_candidate_ids {
         if !seen.insert(*id) {
             bail!("AI goal recommendation selected duplicate candidate id {id}");
         }
-        let candidate = by_id
-            .get(id)
-            .with_context(|| format!("AI goal recommendation selected unknown candidate id {id}"))?;
+        let candidate = by_id.get(id).with_context(|| {
+            format!("AI goal recommendation selected unknown candidate id {id}")
+        })?;
         selected.push(*candidate);
     }
     Ok(selected)
@@ -305,12 +302,18 @@ fn print_recommendation(
     }
     println!("risk_threshold: {}", query.max_risk);
     println!("path_mode: {}", path_mode_name(query.path_mode));
-    println!("target_reclaimable: {}", util::format_bytes(query.target_bytes));
+    println!(
+        "target_reclaimable: {}",
+        util::format_bytes(query.target_bytes)
+    );
     println!("eligible_candidates: {eligible_count}");
     println!("plan_digest: {}", request.plan_digest);
     println!("mutation_authority: false");
     println!("selected_candidates: {}", selected.len());
-    println!("selected_reclaimable: {}", util::format_bytes(selected_bytes));
+    println!(
+        "selected_reclaimable: {}",
+        util::format_bytes(selected_bytes)
+    );
     println!("target_met: {target_met}");
     println!();
 
@@ -486,14 +489,70 @@ mod tests {
     #[test]
     fn eligible_plan_excludes_blocked_non_reversible_tool_and_over_risk_rows() {
         let (database, path) = seeded_database("eligible");
-        insert_candidate(&database, 1, "/tmp/tidyfs-root/a", 100, "a", "low", "quarantine", true, false);
-        insert_candidate(&database, 2, "/tmp/tidyfs-root/b", 200, "b", "low", "tool_native", true, false);
-        insert_candidate(&database, 3, "/tmp/tidyfs-root/c", 300, "c", "low", "quarantine", false, false);
-        insert_candidate(&database, 4, "/tmp/tidyfs-root/d", 400, "d", "low", "quarantine", true, true);
-        insert_candidate(&database, 5, "/tmp/tidyfs-root/e", 500, "e", "medium", "quarantine", true, false);
+        insert_candidate(
+            &database,
+            1,
+            "/tmp/tidyfs-root/a",
+            100,
+            "a",
+            "low",
+            "quarantine",
+            true,
+            false,
+        );
+        insert_candidate(
+            &database,
+            2,
+            "/tmp/tidyfs-root/b",
+            200,
+            "b",
+            "low",
+            "tool_native",
+            true,
+            false,
+        );
+        insert_candidate(
+            &database,
+            3,
+            "/tmp/tidyfs-root/c",
+            300,
+            "c",
+            "low",
+            "quarantine",
+            false,
+            false,
+        );
+        insert_candidate(
+            &database,
+            4,
+            "/tmp/tidyfs-root/d",
+            400,
+            "d",
+            "low",
+            "quarantine",
+            true,
+            true,
+        );
+        insert_candidate(
+            &database,
+            5,
+            "/tmp/tidyfs-root/e",
+            500,
+            "e",
+            "medium",
+            "quarantine",
+            true,
+            false,
+        );
 
         let candidates = load_eligible_candidates(&database, 42, None, Risk::Low, 100).unwrap();
-        assert_eq!(candidates.iter().map(|candidate| candidate.id).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.id)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
         drop(database);
         let _ = std::fs::remove_file(path);
     }
@@ -501,8 +560,28 @@ mod tests {
     #[test]
     fn eligible_plan_counts_each_path_once() {
         let (database, path) = seeded_database("dedup");
-        insert_candidate(&database, 1, "/tmp/tidyfs-root/cache", 100, "a", "low", "quarantine", true, false);
-        insert_candidate(&database, 2, "/tmp/tidyfs-root/cache", 100, "b", "low", "quarantine", true, false);
+        insert_candidate(
+            &database,
+            1,
+            "/tmp/tidyfs-root/cache",
+            100,
+            "a",
+            "low",
+            "quarantine",
+            true,
+            false,
+        );
+        insert_candidate(
+            &database,
+            2,
+            "/tmp/tidyfs-root/cache",
+            100,
+            "b",
+            "low",
+            "quarantine",
+            true,
+            false,
+        );
 
         let candidates = load_eligible_candidates(&database, 42, None, Risk::Low, 100).unwrap();
         assert_eq!(candidates.len(), 1);
@@ -559,7 +638,17 @@ mod tests {
     #[test]
     fn recommend_round_trip_does_not_mutate_plan_or_actions() {
         let (database, path) = seeded_database("roundtrip");
-        insert_candidate(&database, 7, "/tmp/tidyfs-root/.cache/pip", 4096, "pip-cache", "low", "quarantine", true, false);
+        insert_candidate(
+            &database,
+            7,
+            "/tmp/tidyfs-root/.cache/pip",
+            4096,
+            "pip-cache",
+            "low",
+            "quarantine",
+            true,
+            false,
+        );
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake gateway");
         let address = listener.local_addr().expect("local address");
@@ -588,7 +677,9 @@ mod tests {
 
         let before_candidates: i64 = database
             .connection()
-            .query_row("SELECT COUNT(*) FROM cleanup_candidates", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM cleanup_candidates", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         let before_actions: i64 = database
             .connection()
@@ -615,7 +706,9 @@ mod tests {
 
         let after_candidates: i64 = database
             .connection()
-            .query_row("SELECT COUNT(*) FROM cleanup_candidates", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM cleanup_candidates", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         let after_actions: i64 = database
             .connection()
