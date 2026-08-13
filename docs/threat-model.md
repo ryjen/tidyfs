@@ -122,31 +122,37 @@ Residual risk:
 
 A malicious local gateway can lie in explanations, raise risk, omit useful candidates, or choose a poor subset. Under the current design it cannot broaden filesystem mutation authority. This is primarily an integrity/availability and path-privacy concern, not an executor-authority grant.
 
-### 3. Goal-selection confusion or duplicate-path risk reduction
+### 3. Goal-selection overlap, double-counting, or risk reduction
 
 Causes:
 
-- the same filesystem payload matching multiple deterministic rules
-- a lower-risk duplicate match hiding a higher-risk match
-- counting one filesystem payload more than once toward a reclaim target
+- the same path matching multiple deterministic rules
+- a lower-risk duplicate match hiding a higher-risk or blocked match
+- an ancestor and descendant both being persisted as cleanup candidates
+- counting ancestor and descendant bytes independently toward one reclaim target
+- recommending an ancestor that contains a blocked or stricter descendant
 - selecting unknown or duplicate candidate IDs
 - changing the persisted plan during model inference
 
 Mitigations:
 
-- goal recommendation operates only on already-persisted, unblocked, reversible quarantine candidates
-- candidate rows are canonicalized per filesystem path before inference
-- canonicalization preserves the highest deterministic risk for the payload
-- requested risk filtering happens after canonicalization
+- goal recommendation reads the persisted plan but does not inherit every row as model-visible authority
+- exact-path rule matches are grouped before inference
+- exact-path effective risk is the maximum persisted deterministic risk
+- any blocked, non-reversible, or non-quarantine exact-path match suppresses that path from goal advice
+- all filesystem candidate paths in the selected root participate in hierarchy guarding, including blocked and over-threshold descendants
+- every ancestor that contains any descendant candidate is suppressed from goal advice
+- only leaf-most, pairwise non-overlapping filesystem paths can be supplied to the model
+- requested risk filtering happens after exact-path and hierarchy canonicalization
 - request candidate IDs are explicit and bounded
 - unknown or duplicate selected IDs are rejected
-- the exact eligible candidate facts are re-read after inference
+- the exact model-visible candidate facts are re-read after inference
 - a plan/fact mismatch fails closed
-- selected reclaim bytes are summed from the revalidated unique-path set
+- selected reclaim bytes are summed only from the revalidated non-overlapping set
 
 Residual risk:
 
-A bounded candidate limit can make a target unsatisfiable even when additional eligible candidates exist outside the request. The safe result is `target_met: false`; the model is not permitted to expand the candidate set.
+The leaf-most first-slice policy deliberately undercounts bytes that exist only in a suppressed ancestor. A bounded candidate limit can also make a target unsatisfiable even when more eligible candidates exist. Both cases safely produce `target_met: false`; the model is not permitted to expand the candidate set or claim omitted bytes. Issue #62 tracks the shared deterministic hierarchy semantics needed for `plan`, dry-run, and execution.
 
 ### 4. Gateway and privacy leakage
 
@@ -259,6 +265,7 @@ No arbitrary shell.
 No AI mutation authority.
 No AI candidate-creation authority.
 No model-authored reclaim totals as authority.
+No overlapping goal candidates.
 No adapter execution authority.
 No arbitrary file contents sent to AI.
 No non-loopback AI transport.
@@ -281,11 +288,13 @@ The current implementation is expected to preserve all of these properties:
 - [x] AI cannot create or promote executable actions
 - [x] candidate-level AI recommendation freshness is re-derived from authoritative facts
 - [x] goal recommendations can select only supplied eligible candidate IDs
-- [x] duplicate-path canonicalization cannot lower deterministic risk or double-count reclaim bytes
+- [x] exact-path canonicalization cannot lower deterministic risk
+- [x] ancestor/descendant candidates are never simultaneously exposed to goal inference
+- [x] blocked or stricter descendants suppress ancestors from goal advice
 - [x] goal-plan freshness is re-read and validated after inference
-- [x] goal reclaim totals and `target_met` are calculated by `tidyfs`
+- [x] goal reclaim totals and `target_met` are calculated by `tidyfs` from non-overlapping paths
 - [x] goal recommendation does not mutate cleanup candidates, actions, or filesystem state
 - [x] invalid/malformed/provider-failure AI output fails closed
 - [x] action state records success, interruption, recovery, and failure context
 
-Any change that adds permanent deletion, non-loopback inference, tool-native execution, broader AI authority, natural-language goal parsing with new trust implications, or a new mutation primitive should reopen focused threat analysis before implementation.
+Issue #62 tracks the broader deterministic planner/executor hierarchy policy. Any change that adds permanent deletion, non-loopback inference, tool-native execution, broader AI authority, natural-language goal parsing with new trust implications, or a new mutation primitive should reopen focused threat analysis before implementation.
