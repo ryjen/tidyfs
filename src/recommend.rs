@@ -1,3 +1,4 @@
+use crate::ai_facts;
 use crate::db::Database;
 use crate::rules::{self, Risk};
 use crate::util;
@@ -71,7 +72,7 @@ pub fn run_recommend(database: &Database, query: RecommendQuery) -> Result<()> {
     let contract_candidates = build_contract_candidates(&original, query.path_mode);
     let contract_root = root_filter
         .as_deref()
-        .map(|root| privacy_path(root, query.path_mode));
+        .map(|root| ai_facts::privacy_path(root, query.path_mode));
     let request = AiGoalRequest::new(
         new_gateway_request_id(),
         scan.id,
@@ -157,10 +158,10 @@ fn load_eligible_candidates(
           AND blocked = 0
         ORDER BY path ASC,
           CASE risk
-            WHEN 'low' THEN 0
-            WHEN 'medium' THEN 1
-            WHEN 'high' THEN 2
-            WHEN 'forbidden' THEN 3
+            WHEN 'forbidden' THEN 0
+            WHEN 'high' THEN 1
+            WHEN 'medium' THEN 2
+            WHEN 'low' THEN 3
             ELSE 4
           END ASC,
           rule_id ASC,
@@ -183,6 +184,8 @@ fn load_eligible_candidates(
 
     // A path can match more than one deterministic rule. Recommendation byte totals
     // describe unique filesystem payloads, so retain one canonical eligible row per path.
+    // The canonical row is the highest-risk eligible match so deduplication cannot lower
+    // deterministic authority.
     let mut by_path: BTreeMap<PathBuf, PlanCandidate> = BTreeMap::new();
     for row in rows {
         let (id, path, raw_size, rule_id, category, risk_text, action_type, reversible) = row?;
@@ -228,7 +231,7 @@ fn build_contract_candidates(
         .iter()
         .map(|candidate| AiGoalCandidate {
             candidate_id: candidate.id,
-            path: privacy_path(&candidate.path, path_mode),
+            path: ai_facts::privacy_path(&candidate.path, path_mode),
             path_mode,
             size_bytes: candidate.size_bytes,
             risk: candidate.risk.to_string(),
@@ -309,7 +312,7 @@ fn print_recommendation(
         println!("filter_root: {}", root.display());
     }
     println!("risk_threshold: {}", query.max_risk);
-    println!("path_mode: {}", path_mode_name(query.path_mode));
+    println!("path_mode: {}", ai_facts::path_mode_name(query.path_mode));
     println!(
         "target_reclaimable: {}",
         util::format_bytes(query.target_bytes)
@@ -372,59 +375,6 @@ fn parse_risk(value: &str) -> Result<Risk> {
         "high" => Ok(Risk::High),
         "forbidden" => Ok(Risk::Forbidden),
         other => bail!("unknown risk value {other:?}"),
-    }
-}
-
-fn privacy_path(path: &Path, mode: AiPathMode) -> String {
-    match mode {
-        AiPathMode::Full => path.to_string_lossy().into_owned(),
-        AiPathMode::Basename => path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "<root>".to_owned()),
-        AiPathMode::Redacted => redact_path(path),
-    }
-}
-
-fn redact_path(path: &Path) -> String {
-    let value = path.to_string_lossy().replace('\\', "/");
-    let markers = [
-        ".gradle/caches",
-        "Library/Developer/Xcode/DerivedData",
-        "DerivedData",
-        ".cargo/registry",
-        ".pnpm-store",
-        "node_modules",
-        ".cache",
-        "/nix/store",
-    ];
-
-    for marker in markers {
-        if let Some(index) = value.find(marker) {
-            if marker == "/nix/store" {
-                return "/nix/store/<redacted>".to_owned();
-            }
-            let suffix = &value[index..];
-            if marker == ".cache" {
-                let mut parts = suffix.split('/');
-                let first = parts.next().unwrap_or(".cache");
-                return parts.next().map_or_else(
-                    || format!("<redacted>/{first}"),
-                    |child| format!("<redacted>/{first}/{child}"),
-                );
-            }
-            return format!("<redacted>/{marker}");
-        }
-    }
-
-    "<redacted>".to_owned()
-}
-
-fn path_mode_name(mode: AiPathMode) -> &'static str {
-    match mode {
-        AiPathMode::Full => "full",
-        AiPathMode::Basename => "basename",
-        AiPathMode::Redacted => "redacted",
     }
 }
 
@@ -566,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn eligible_plan_counts_each_path_once_and_prefers_lowest_risk() {
+    fn eligible_plan_counts_each_path_once_and_preserves_highest_risk() {
         let (database, path) = seeded_database("dedup");
         insert_candidate(
             &database,
@@ -593,8 +543,40 @@ mod tests {
 
         let candidates = load_eligible_candidates(&database, 42, None, Risk::Medium, 100).unwrap();
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].id, 2);
-        assert_eq!(candidates[0].risk, Risk::Low);
+        assert_eq!(candidates[0].id, 1);
+        assert_eq!(candidates[0].risk, Risk::Medium);
+        drop(database);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn duplicate_path_with_higher_risk_is_not_available_under_lower_threshold() {
+        let (database, path) = seeded_database("dedup-threshold");
+        insert_candidate(
+            &database,
+            1,
+            "/tmp/tidyfs-root/cache",
+            100,
+            "medium-rule",
+            "medium",
+            "quarantine",
+            true,
+            false,
+        );
+        insert_candidate(
+            &database,
+            2,
+            "/tmp/tidyfs-root/cache",
+            100,
+            "low-rule",
+            "low",
+            "quarantine",
+            true,
+            false,
+        );
+
+        let candidates = load_eligible_candidates(&database, 42, None, Risk::Low, 100).unwrap();
+        assert!(candidates.is_empty());
         drop(database);
         let _ = std::fs::remove_file(path);
     }
