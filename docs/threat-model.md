@@ -84,7 +84,7 @@ Mitigations:
 - same-filesystem quarantine preflight
 - payload identity verification
 - durable transitional action states
-- explicit read-only recovery and restore
+- explicit read-only recovery and explicit restore
 - atomic no-overwrite restore on supported platforms
 
 Residual risk:
