@@ -1,199 +1,201 @@
 # AI Usage
 
-AI is optional and non-authoritative.
-
-The deterministic core must remain useful with AI disabled.
+AI is optional and non-authoritative. The deterministic core remains useful with AI disabled.
 
 ## Core rule
 
 ```text
-scanner finds facts
-rules create candidates
-policy validates candidates
-AI explains and ranks
-executor acts only on validated candidates
+scanner observes authoritative facts
+rules and protected-category policy determine eligibility
+AI may analyze or conservatively enrich already-valid candidates
+deterministic code revalidates freshness and risk
+executor acts only after explicit approval through the existing reversible path
 ```
 
-## AI can do
+## AI can do today
 
-- explain disk usage
-- rank existing cleanup candidates
-- explain risk and tradeoffs
-- answer natural-language questions over scan summaries
-- classify ambiguous paths as report-only suggestions
-- draft disabled rule proposals
+- analyze bounded metadata for classified scan candidates;
+- classify ambiguous usage for explanation;
+- recommend `ignore`, `review`, or `quarantine` for an already-observed candidate;
+- provide confidence, rationale, caveats, risk, and provider/model provenance;
+- make an otherwise eligible deterministic candidate more conservative;
+- contribute advisory evidence displayed by `explain`.
 
 ## AI cannot do
 
-- invent paths to delete
-- invent shell commands
-- lower risk tiers
-- override blocked candidates
-- inspect file contents by default
-- execute actions
-- create enabled rules directly
+- invent an executable cleanup candidate;
+- invent or execute shell commands;
+- lower deterministic risk;
+- override protected or blocked candidates;
+- promote `tool_native` or `report_only` work into filesystem mutation;
+- broaden the selected root;
+- inspect arbitrary file contents through the current contract;
+- perform quarantine, restore, recovery, or deletion;
+- authorize permanent deletion;
+- bypass `clean --safe --interactive` or source-identity checks.
 
-## Modes
+## Read-only analysis
 
-### Off
+Use an explicitly configured local numeric-loopback gateway:
 
-```yaml
-ai:
-  enabled: false
+```bash
+tidyfs analyze \
+  --endpoint http://127.0.0.1:8000 \
+  --limit 10
 ```
 
-Everything works deterministically.
+Useful bounds include:
 
-### Explain only
-
-```yaml
-ai:
-  enabled: true
-  mode: explain
+```bash
+tidyfs analyze \
+  --endpoint http://127.0.0.1:8000 \
+  --root ~/src \
+  --path-mode redacted \
+  --limit 5
 ```
 
-AI receives validated plans and summaries only.
+`analyze` reads already-indexed facts and renders recommendations. It does not persist cleanup candidates or mutate the filesystem.
 
-### Suggest classifications
+## AI-enriched deterministic planning
 
-```yaml
-ai:
-  enabled: true
-  mode: suggest
+AI may conservatively enrich an existing deterministic plan:
+
+```bash
+tidyfs plan \
+  --safe \
+  --ai-endpoint http://127.0.0.1:8000 \
+  --ai-path-mode redacted \
+  --ai-limit 10
 ```
 
-AI can suggest labels for ambiguous directories. Suggestions are report-only.
+The planner sends AI only paths that deterministic rules and protected-category policy have already made eligible for reversible quarantine.
 
-### Draft rules
+After inference, tidyfs:
 
-```yaml
-ai:
-  enabled: true
-  mode: draft_rules
-```
+1. validates the response schema and request/provenance correlation;
+2. re-queries authoritative scan/index facts;
+3. re-derives the observation digest;
+4. rejects stale or mismatched advice;
+5. applies one-way conservative conflict policy;
+6. reapplies the selected risk threshold;
+7. persists plan candidates and advisory evidence only after the selected AI calls complete successfully.
 
-AI can draft disabled rules for review.
+The model cannot make a previously ineligible candidate executable.
 
-## Example: explaining disk usage
+## Conservative conflict policy
 
-Input to AI:
+For an already-eligible reversible quarantine candidate:
 
-```json
-{
-  "root": "/home/rj",
-  "largest_directories": [
-    { "path": "~/src", "size": "82 GB", "labels": ["source_projects"] },
-    { "path": "~/.cache", "size": "41 GB", "labels": ["cache"] },
-    { "path": "~/.local/share/Steam", "size": "36 GB", "labels": ["application_data"] },
-    { "path": "/var/lib/docker", "size": "24 GB", "labels": ["docker_data"] }
-  ],
-  "protected_categories": [
-    "source_repo",
-    "secret_material",
-    "database",
-    "vm_image"
-  ]
-}
-```
+- deterministic blocks always win;
+- effective risk is `max(deterministic risk, AI risk)`;
+- `ignore` blocks the candidate;
+- `review` blocks the candidate pending human review;
+- low-confidence advice is review-only;
+- `quarantine` merely preserves the existing deterministic action if every other gate still permits it.
 
-AI response:
+AI therefore has **one-way authority**: it may preserve or reduce deterministic authority, never increase it.
+
+## Freshness and candidate binding
+
+Each request is bound to canonical post-privacy observation facts using SHA-256.
 
 ```text
-Most space is split between source projects, user cache, Steam application data, and Docker data.
-
-The safest cleanup candidates are likely under ~/.cache and Docker builder/image cache. ~/src and Steam are large but should be treated as owned user/application data, not automatic cleanup targets.
+candidate facts
+  -> canonical observation
+  -> observation digest
+  -> AI request/response
+  -> authoritative fact reconstruction
+  -> digest comparison
+  -> accept or reject recommendation
 ```
 
-## Example: ranking candidates
+Stored AI evidence is not trusted as freshness authority. `tidyfs explain <path>` re-derives the current observation and marks stored evidence `fresh` or `stale`.
 
-Input:
+## Path privacy modes
 
-```json
-{
-  "cleanup_candidates": [
-    {
-      "candidate_id": 1,
-      "path": "~/.cache/thumbnails",
-      "size": "4.3 GB",
-      "risk": "low",
-      "reason": "Generated thumbnails older than 60 days"
-    },
-    {
-      "candidate_id": 2,
-      "path": "~/.cache/pip",
-      "size": "3.1 GB",
-      "risk": "low",
-      "reason": "Python package cache older than 30 days"
-    },
-    {
-      "candidate_id": 3,
-      "path": "~/src/foo/node_modules",
-      "size": "8.7 GB",
-      "risk": "medium",
-      "reason": "Regenerable dependency directory in inactive project"
-    }
-  ]
-}
+AI receives no arbitrary file contents. Paths are explicitly transformed before inference:
+
+- `full` — exact indexed path;
+- `basename` — basename only;
+- `redacted` — remove user/project-identifying prefixes while preserving useful ecosystem structures.
+
+Examples of structure intentionally preserved by redaction include `.cache`, `.gradle/caches`, `DerivedData`, `node_modules`, and `/nix/store`.
+
+Defaults:
+
+- explicit read-only `analyze`: `full` is acceptable for a deliberately selected local loopback model;
+- AI-enriched planning: `redacted` by default.
+
+## Gateway restrictions
+
+The current v1 runtime is local-only by design:
+
+- numeric loopback addresses only (`127.0.0.0/8` or `::1`);
+- explicit non-zero port;
+- no DNS resolution;
+- no redirects;
+- no credentials;
+- no generic chat/messages API;
+- no MCP/tool invocation;
+- bounded requests, headers, and responses;
+- connect/read/write timeouts;
+- strict `application/json` response handling;
+- no transfer encoding/chunked response support.
+
+Remote inference is intentionally not enabled by a configuration switch. Adding it requires a separate design covering TLS, authentication/capability identity, endpoint policy, credentials, path disclosure, and operational controls.
+
+## Failure behavior
+
+AI failures never synthesize a cleanup authorization.
+
+These conditions fail closed:
+
+- provider unavailable or timeout;
+- malformed JSON;
+- unknown contract/schema version;
+- unknown response fields;
+- unsupported action;
+- mismatched request ID;
+- mismatched provenance request ID;
+- mismatched/stale observation digest;
+- oversized response;
+- unsupported HTTP semantics;
+- changed candidate facts during inference.
+
+For AI-enriched planning, failure leaves no newly accepted enriched recommendation for the affected planning attempt.
+
+## Explainability
+
+Persisted advisory evidence may include:
+
+- classification and confidence;
+- rationale and caveats;
+- AI risk and recommended action;
+- provider, model, and request ID;
+- stable candidate identity;
+- path privacy mode;
+- selected risk context;
+- observation digest;
+- creation time and current freshness state.
+
+Model-controlled terminal and bidirectional-control characters are escaped before rendering.
+
+## Deterministic-only operation
+
+AI is not required for normal use:
+
+```bash
+tidyfs scan ~
+tidyfs classify --summary
+tidyfs plan --safe
+tidyfs clean --dry-run
+tidyfs clean --safe --interactive
 ```
 
-Valid AI output:
+The same deterministic policy, risk, quarantine, recovery, and restore model remains authoritative whether AI is configured or not.
 
-```json
-{
-  "summary": "The lowest-risk space recovery is from generated caches.",
-  "recommended_order": [
-    {
-      "candidate_id": 1,
-      "reason": "Low risk and fully regenerable."
-    },
-    {
-      "candidate_id": 2,
-      "reason": "Low risk, but future installs may be slower."
-    },
-    {
-      "candidate_id": 3,
-      "reason": "High reclaim value, but medium risk because it affects a project workspace."
-    }
-  ],
-  "warnings": []
-}
-```
+## Planned advisory work
 
-## Output validation
+The next product direction is not a generic chat mode. QART #51 evaluates a structured goal-oriented advisory layer over an existing deterministic plan—for example, recommending a validated subset of existing candidates to meet a reclaim target without creating new execution authority.
 
-AI output must be validated.
-
-Rules:
-
-- candidate IDs must already exist
-- paths cannot be invented
-- commands cannot be invented
-- risk cannot be lowered
-- actions cannot be changed
-- blocked candidates cannot become allowed
-
-## Redaction
-
-Before sending anything to AI:
-
-- redact emails
-- redact usernames if configured
-- omit secret paths
-- omit file contents
-- summarize large directories
-- avoid browser profile details
-- avoid mail/password manager/wallet directories
-
-## Providers
-
-Planned provider model:
-
-```yaml
-ai:
-  provider: ollama
-  endpoint: http://localhost:11434
-  model: qwen3:8b
-  send_file_contents: false
-```
-
-The default should be local-first and content-free.
+AI-generated disabled rule proposals, non-loopback transport, and tool-native cleanup execution remain separate future decisions.
