@@ -40,7 +40,7 @@ mise run fuzz-ai-build
 mise run fuzz-ai
 ```
 
-Pull-request CI deterministically builds the fuzz harness so a broken target cannot merge unnoticed. Coverage-guided fuzz execution itself remains scheduled/manual rather than a pull-request blocker. Any discovered crash or invariant violation should be minimized into a deterministic regression test before the fix is merged.
+Pull-request CI deterministically builds the fuzz harness so a broken target cannot merge unnoticed. Coverage-guided fuzz execution itself remains scheduled/manual rather than a pull-request blocker. When scheduled/manual fuzzing fails, CI preserves `fuzz/artifacts/` as a short-lived workflow artifact so the failing input can be reproduced. Any discovered crash or invariant violation should be minimized into a deterministic regression test before the fix is merged.
 
 Good future fuzz/property targets include:
 
