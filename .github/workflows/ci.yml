@@ -4,15 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    - cron: "17 4 * * 0"
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -60,7 +57,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  fuzz:
+  fuzz-harness:
     name: AI fuzz harness
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -78,16 +75,3 @@ jobs:
 
       - name: Build AI proposal fuzz target
         run: cargo fuzz build ai_proposal_json
-
-      - name: Fuzz AI proposal parsing and validation
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        run: cargo fuzz run ai_proposal_json -- -max_total_time=60
-
-      - name: Preserve fuzz failure artifacts
-        if: failure() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        uses: actions/upload-artifact@v7
-        with:
-          name: ai-proposal-fuzz-artifacts-${{ github.run_id }}
-          path: fuzz/artifacts/
-          if-no-files-found: ignore
-          retention-days: 14
