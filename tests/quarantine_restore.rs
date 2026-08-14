@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -149,4 +149,79 @@ fn quarantine_then_restore_preserves_payload_and_action_state() {
         .expect("query restored action");
     assert_eq!(restored_status, "restored");
     assert!(restored_at.is_some());
+}
+
+#[test]
+fn overlapping_legacy_candidates_execute_only_leaf_payload() {
+    let sandbox = Sandbox::new("overlapping-execution");
+    let parent = sandbox.scan_root.join("cache");
+    let child = parent.join("sub");
+    let parent_marker = parent.join("keep.txt");
+    let child_payload = child.join("generated.bin");
+    fs::create_dir_all(&child).expect("create nested candidate directories");
+    fs::write(&parent_marker, b"parent-only-data").expect("write parent marker");
+    fs::write(&child_payload, b"generated-child-data").expect("write child payload");
+
+    assert_success(&sandbox.run(&[
+        "scan",
+        sandbox.scan_root.to_str().expect("UTF-8 temporary path"),
+    ]));
+
+    let conn = sandbox.connection();
+    let scan_id: i64 = conn
+        .query_row(
+            "SELECT id FROM scans WHERE status = 'completed' ORDER BY id DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query completed scan");
+
+    let insert_candidate = |id: i64, path: &PathBuf, size: i64, rule_id: &str| {
+        conn.execute(
+            r#"
+            INSERT INTO cleanup_candidates(
+              id, scan_id, path, size_bytes, rule_id, rule_label, category, risk,
+              action_type, reversible, reason, blocked, blocked_reason, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, 'cache', 'low', 'quarantine', 1,
+                      'legacy overlap fixture', 0, NULL, 3)
+            "#,
+            params![
+                id,
+                scan_id,
+                path.to_string_lossy().to_string(),
+                size,
+                rule_id,
+            ],
+        )
+        .expect("insert overlapping cleanup candidate");
+    };
+
+    insert_candidate(1001, &parent, 1_000_000, "parent-cache");
+    insert_candidate(1002, &child, 400_000, "child-cache");
+    drop(conn);
+
+    let output = sandbox.run_with_input(
+        &["clean", "--safe", "--interactive", "--limit", "10"],
+        b"yes\n",
+    );
+    assert_success(&output);
+
+    assert!(parent.is_dir(), "ancestor candidate was incorrectly quarantined");
+    assert_eq!(
+        fs::read(&parent_marker).expect("read surviving parent-only file"),
+        b"parent-only-data"
+    );
+    assert!(!child.exists(), "leaf candidate was not quarantined");
+
+    let conn = sandbox.connection();
+    let actions: Vec<(String, String)> = conn
+        .prepare("SELECT original_path, status FROM actions ORDER BY id")
+        .expect("prepare action query")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("query actions")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("collect actions");
+    assert_eq!(actions.len(), 1, "overlapping parent created an extra action");
+    assert_eq!(actions[0].0, child.to_string_lossy());
+    assert_eq!(actions[0].1, "quarantined");
 }
