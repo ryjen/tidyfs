@@ -18,7 +18,7 @@ pub struct CleanQuery {
     pub limit: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Candidate {
     id: i64,
     path: PathBuf,
@@ -30,6 +30,8 @@ struct Candidate {
     action_type: String,
     reversible: bool,
     reason: String,
+    blocked: bool,
+    blocked_reason: Option<String>,
     scanned_dev: Option<u64>,
     scanned_inode: Option<u64>,
 }
@@ -448,6 +450,8 @@ fn load_allowed_candidates(database: &Database, scan_id: i64) -> Result<Vec<Cand
           c.action_type,
           c.reversible,
           c.reason,
+          c.blocked,
+          c.blocked_reason,
           e.dev,
           e.inode
         FROM cleanup_candidates c
@@ -455,7 +459,6 @@ fn load_allowed_candidates(database: &Database, scan_id: i64) -> Result<Vec<Cand
           ON e.scan_id = c.scan_id
          AND e.path = c.path
         WHERE c.scan_id = ?1
-          AND c.blocked = 0
         "#,
     )?;
 
@@ -473,13 +476,52 @@ fn load_allowed_candidates(database: &Database, scan_id: i64) -> Result<Vec<Cand
                 action_type: row.get(7)?,
                 reversible: row.get::<_, i64>(8)? != 0,
                 reason: row.get(9)?,
-                scanned_dev: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
-                scanned_inode: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
+                blocked: row.get::<_, i64>(10)? != 0,
+                blocked_reason: row.get(11)?,
+                scanned_dev: row.get::<_, Option<i64>>(12)?.map(|value| value as u64),
+                scanned_inode: row.get::<_, Option<i64>>(13)?.map(|value| value as u64),
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
-    Ok(rows)
+    Ok(canonicalize_clean_candidates(rows)
+        .into_iter()
+        .filter(|candidate| !candidate.blocked)
+        .collect())
+}
+
+fn canonicalize_clean_candidates(candidates: Vec<Candidate>) -> Vec<Candidate> {
+    let decisions = {
+        let inputs: Vec<_> = candidates
+            .iter()
+            .map(|candidate| rules::HierarchyInput {
+                path: &candidate.path,
+                risk: candidate.risk,
+                blocked: candidate.blocked,
+                blocked_reason: candidate.blocked_reason.as_deref(),
+                reversible: candidate.reversible,
+                action_type: &candidate.action_type,
+                rule_id: &candidate.rule_id,
+            })
+            .collect();
+        rules::canonicalize_hierarchy(&inputs)
+    };
+
+    decisions
+        .into_iter()
+        .map(|decision| {
+            let mut candidate = candidates[decision.source_index].clone();
+            candidate.risk = decision.effective_risk;
+            candidate.blocked = decision.blocked;
+            let prior_reason = candidate.blocked_reason.take();
+            candidate.blocked_reason = if candidate.blocked {
+                decision.blocked_reason.or(prior_reason)
+            } else {
+                None
+            };
+            candidate
+        })
+        .collect()
 }
 
 fn parse_risk(value: &str) -> Risk {
@@ -513,8 +555,12 @@ fn print_candidate(candidate: &Candidate) {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{verify_candidate_at_path, verify_scanned_identity, Candidate};
+    use super::{
+        load_allowed_candidates, verify_candidate_at_path, verify_scanned_identity, Candidate,
+    };
+    use crate::db::Database;
     use crate::rules::Risk;
+    use rusqlite::params;
     use std::fs;
     use std::os::unix::fs::{symlink, MetadataExt};
     use std::path::PathBuf;
@@ -532,6 +578,8 @@ mod tests {
             action_type: "quarantine".into(),
             reversible: true,
             reason: "test".into(),
+            blocked: false,
+            blocked_reason: None,
             scanned_dev: Some(dev),
             scanned_inode: Some(inode),
         }
@@ -543,6 +591,59 @@ mod tests {
             .expect("clock before epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("tidyfs-{name}-{}-{nonce}", std::process::id()))
+    }
+
+    #[test]
+    fn legacy_plan_hierarchy_filters_overlaps_before_cleanup_selection() {
+        let db_path = fixture_path("legacy-hierarchy.db");
+        let database = Database::open(&db_path).expect("open test database");
+        database.migrate().expect("migrate test database");
+        database
+            .connection()
+            .execute(
+                "INSERT INTO scans(id, root_path, started_at, finished_at, status) VALUES (42, '/tmp', 1, 2, 'completed')",
+                [],
+            )
+            .expect("insert scan");
+
+        let insert = |id: i64, path: &str, risk: &str, blocked: bool| {
+            database
+                .connection()
+                .execute(
+                    r#"
+                    INSERT INTO cleanup_candidates(
+                      id, scan_id, path, size_bytes, rule_id, rule_label, category, risk,
+                      action_type, reversible, reason, blocked, blocked_reason, created_at
+                    ) VALUES (?1, 42, ?2, 100, ?3, ?3, 'cache', ?4, 'quarantine', 1, 'test', ?5, ?6, 3)
+                    "#,
+                    params![
+                        id,
+                        path,
+                        format!("rule-{id}"),
+                        risk,
+                        if blocked { 1_i64 } else { 0_i64 },
+                        blocked.then_some("blocked child"),
+                    ],
+                )
+                .expect("insert cleanup candidate");
+        };
+
+        insert(1, "/tmp/hierarchy/a", "low", false);
+        insert(2, "/tmp/hierarchy/a/child", "low", false);
+        insert(3, "/tmp/hierarchy/b", "low", false);
+        insert(4, "/tmp/hierarchy/b/child", "forbidden", true);
+
+        let candidates = load_allowed_candidates(&database, 42).expect("load canonical candidates");
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.id)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+
+        drop(database);
+        let _ = fs::remove_file(db_path);
     }
 
     #[test]
