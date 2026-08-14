@@ -206,7 +206,10 @@ fn overlapping_legacy_candidates_execute_only_leaf_payload() {
     );
     assert_success(&output);
 
-    assert!(parent.is_dir(), "ancestor candidate was incorrectly quarantined");
+    assert!(
+        parent.is_dir(),
+        "ancestor candidate was incorrectly quarantined"
+    );
     assert_eq!(
         fs::read(&parent_marker).expect("read surviving parent-only file"),
         b"parent-only-data"
@@ -221,7 +224,11 @@ fn overlapping_legacy_candidates_execute_only_leaf_payload() {
         .expect("query actions")
         .collect::<rusqlite::Result<Vec<_>>>()
         .expect("collect actions");
-    assert_eq!(actions.len(), 1, "overlapping parent created an extra action");
+    assert_eq!(
+        actions.len(),
+        1,
+        "overlapping parent created an extra action"
+    );
     assert_eq!(actions[0].0, child.to_string_lossy());
     assert_eq!(actions[0].1, "quarantined");
 }
