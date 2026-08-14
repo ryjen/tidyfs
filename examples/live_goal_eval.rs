@@ -14,7 +14,9 @@ use tidyfs::evaluation::{
 const REPORT_VERSION: u32 = 1;
 
 #[derive(Debug, Parser)]
-#[command(about = "Run optional live-model quality evaluations against a local tidyfs goal gateway")]
+#[command(
+    about = "Run optional live-model quality evaluations against a local tidyfs goal gateway"
+)]
 struct Args {
     /// Numeric-loopback gateway endpoint, for example http://127.0.0.1:8000.
     #[arg(long)]
@@ -280,8 +282,8 @@ fn summarize(results: &[FixtureResult], baseline: &EvaluationBaseline) -> Evalua
         .iter()
         .filter_map(|result| result.score.as_ref().map(|score| score.total_score))
         .collect();
-    let average_score = (!scores.is_empty())
-        .then(|| scores.iter().sum::<f64>() / scores.len() as f64);
+    let average_score =
+        (!scores.is_empty()).then(|| scores.iter().sum::<f64>() / scores.len() as f64);
 
     EvaluationSummary {
         fixture_count: results.len(),
@@ -354,7 +356,10 @@ where
 }
 
 fn write_report(path: &Path, report: &EvaluationReport) -> Result<()> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent)
             .with_context(|| format!("creating report directory {}", parent.display()))?;
     }
