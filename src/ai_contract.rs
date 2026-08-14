@@ -146,6 +146,7 @@ pub enum AiTransportValidationError {
     RequestIdMismatch,
     ObservationDigestMismatch,
     InvalidProposal(AiProposalValidationError),
+    DisallowedAction(AiRecommendedAction),
 }
 
 impl fmt::Display for AiTransportValidationError {
@@ -159,6 +160,9 @@ impl fmt::Display for AiTransportValidationError {
                 write!(f, "AI response observation digest does not match request")
             }
             Self::InvalidProposal(error) => write!(f, "AI response proposal rejected: {error}"),
+            Self::DisallowedAction(action) => {
+                write!(f, "AI response proposed disallowed action: {action:?}")
+            }
         }
     }
 }
@@ -184,6 +188,15 @@ pub fn validate_transport_response(
         .proposal
         .validate()
         .map_err(AiTransportValidationError::InvalidProposal)?;
+    if !request
+        .constraints
+        .allowed_actions
+        .contains(&response.proposal.recommended_action)
+    {
+        return Err(AiTransportValidationError::DisallowedAction(
+            response.proposal.recommended_action,
+        ));
+    }
     Ok(response.proposal)
 }
 
@@ -339,6 +352,15 @@ mod tests {
         }
     }
 
+    fn response(request: &AiTransportRequest, proposal: AiCleanupProposal) -> AiTransportResponse {
+        AiTransportResponse {
+            contract_version: AI_TRANSPORT_CONTRACT_VERSION,
+            request_id: request.request_id.clone(),
+            proposal,
+            observation: request.candidate.observation.clone(),
+        }
+    }
+
     #[test]
     fn sha256_matches_known_vector() {
         assert_eq!(
@@ -383,12 +405,7 @@ mod tests {
     #[test]
     fn response_must_match_request_and_observation() {
         let request = AiTransportRequest::new("req-1".to_owned(), observation());
-        let valid = AiTransportResponse {
-            contract_version: AI_TRANSPORT_CONTRACT_VERSION,
-            request_id: request.request_id.clone(),
-            proposal: proposal(),
-            observation: request.candidate.observation.clone(),
-        };
+        let valid = response(&request, proposal());
         assert_eq!(validate_transport_response(&request, valid), Ok(proposal()));
 
         let mismatched = AiTransportResponse {
@@ -400,6 +417,39 @@ mod tests {
         assert_eq!(
             validate_transport_response(&request, mismatched),
             Err(AiTransportValidationError::RequestIdMismatch)
+        );
+    }
+
+    #[test]
+    fn response_action_must_be_allowed_by_request() {
+        let mut request = AiTransportRequest::new("req-1".to_owned(), observation());
+        request.constraints.allowed_actions = vec![AiRecommendedAction::Review];
+
+        assert_eq!(
+            validate_transport_response(&request, response(&request, proposal())),
+            Ok(proposal())
+        );
+
+        let mut disallowed = proposal();
+        disallowed.recommended_action = AiRecommendedAction::Quarantine;
+        assert_eq!(
+            validate_transport_response(&request, response(&request, disallowed)),
+            Err(AiTransportValidationError::DisallowedAction(
+                AiRecommendedAction::Quarantine
+            ))
+        );
+    }
+
+    #[test]
+    fn empty_allowed_actions_rejects_every_proposal_action() {
+        let mut request = AiTransportRequest::new("req-1".to_owned(), observation());
+        request.constraints.allowed_actions.clear();
+
+        assert_eq!(
+            validate_transport_response(&request, response(&request, proposal())),
+            Err(AiTransportValidationError::DisallowedAction(
+                AiRecommendedAction::Review
+            ))
         );
     }
 }
