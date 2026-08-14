@@ -443,11 +443,9 @@ mod tests {
 
     #[test]
     fn conservative_irrelevant_recommendation_scores_lower() {
-        let score = score_goal_recommendation(
-            &fixture(),
-            &recommendation(vec![8], "small candidate"),
-        )
-        .expect("score recommendation");
+        let score =
+            score_goal_recommendation(&fixture(), &recommendation(vec![8], "small candidate"))
+                .expect("score recommendation");
         assert!(score.total_score < 50.0);
         assert!(!score.target_met);
         assert!(!score.preferred_hit);
