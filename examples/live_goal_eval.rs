@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -369,15 +370,23 @@ fn write_report(path: &Path, report: &EvaluationReport) -> Result<()> {
 
 fn print_report(path: &Path, report: &EvaluationReport) {
     println!("Live goal recommendation evaluation");
-    println!("suite: {} v{}", report.suite_name, report.suite_version);
+    println!(
+        "suite: {} v{}",
+        terminal_safe(&report.suite_name),
+        report.suite_version
+    );
     println!("tidyfs: {}", report.runtime.tidyfs_version);
-    println!("endpoint: {}", report.runtime.endpoint);
+    println!("endpoint: {}", terminal_safe(&report.runtime.endpoint));
     println!("runtime: {}/{}", report.runtime.os, report.runtime.arch);
     if report.provider_models.is_empty() {
         println!("provider/model: unavailable");
     } else {
         for item in &report.provider_models {
-            println!("provider/model: {}/{}", item.provider, item.model);
+            println!(
+                "provider/model: {}/{}",
+                terminal_safe(&item.provider),
+                terminal_safe(&item.model)
+            );
         }
     }
     println!();
@@ -386,7 +395,7 @@ fn print_report(path: &Path, report: &EvaluationReport) {
         match &fixture.score {
             Some(score) => println!(
                 "{}: {} score={:.1} baseline={:.1} selected={} bytes={} target_met={} latency={}ms",
-                fixture.fixture_id,
+                terminal_safe(&fixture.fixture_id),
                 fixture.status,
                 score.total_score,
                 fixture.baseline_minimum_score,
@@ -397,10 +406,10 @@ fn print_report(path: &Path, report: &EvaluationReport) {
             ),
             None => println!(
                 "{}: {} latency={}ms error={}",
-                fixture.fixture_id,
+                terminal_safe(&fixture.fixture_id),
                 fixture.status,
                 fixture.latency_ms,
-                fixture.error.as_deref().unwrap_or("unknown")
+                terminal_safe(fixture.error.as_deref().unwrap_or("unknown"))
             ),
         }
     }
@@ -432,5 +441,25 @@ fn print_report(path: &Path, report: &EvaluationReport) {
                 .unwrap_or_else(|| "n/a".to_owned())
         );
     }
-    println!("json_report: {}", path.display());
+    println!("json_report: {}", terminal_safe(&path.display().to_string()));
+}
+
+fn terminal_safe(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for character in value.chars() {
+        let bidi_control = matches!(
+            character,
+            '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        );
+        if character.is_control() || bidi_control {
+            write!(&mut output, "\\u{{{:x}}}", character as u32)
+                .expect("writing to String cannot fail");
+        } else {
+            output.push(character);
+        }
+    }
+    output
 }
