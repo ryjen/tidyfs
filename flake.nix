@@ -48,6 +48,7 @@
 
             postInstall = ''
               "$out/bin/tidyfs" --help >/dev/null
+              test "$("$out/bin/tidyfs" --version)" = "tidyfs ${cargoToml.package.version}"
             '';
 
             meta = {
