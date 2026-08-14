@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -219,26 +219,32 @@ pub fn canonicalize_hierarchy(inputs: &[HierarchyInput<'_>]) -> Vec<HierarchyDec
         });
     }
 
-    let filesystem_paths: Vec<_> = canonical
+    let filesystem_entries: BTreeMap<_, _> = canonical
         .iter()
         .enumerate()
         .filter(|(_, entry)| entry.filesystem)
-        .map(|(index, entry)| (index, entry.path.clone()))
+        .map(|(index, entry)| (entry.path.clone(), index))
         .collect();
+    let mut ancestors_to_block = BTreeSet::new();
 
-    for (entry_index, path) in &filesystem_paths {
-        let has_descendant = filesystem_paths.iter().any(|(other_index, other_path)| {
-            other_index != entry_index && other_path != path && other_path.starts_with(path)
-        });
-        if has_descendant {
-            let entry = &mut canonical[*entry_index];
-            if !entry.decision.blocked {
-                entry.decision.blocked = true;
-                entry.decision.blocked_reason = Some(
-                    "overlapping descendant candidate exists; ancestor suppressed to avoid double-counting or policy bypass"
-                        .to_owned(),
-                );
+    for path in filesystem_entries.keys() {
+        let mut ancestor = path.parent();
+        while let Some(parent) = ancestor {
+            if let Some(index) = filesystem_entries.get(parent) {
+                ancestors_to_block.insert(*index);
             }
+            ancestor = parent.parent();
+        }
+    }
+
+    for index in ancestors_to_block {
+        let entry = &mut canonical[index];
+        if !entry.decision.blocked {
+            entry.decision.blocked = true;
+            entry.decision.blocked_reason = Some(
+                "overlapping descendant candidate exists; ancestor suppressed to avoid double-counting or policy bypass"
+                    .to_owned(),
+            );
         }
     }
 
