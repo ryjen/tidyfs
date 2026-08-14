@@ -52,8 +52,8 @@ fn assert_accepted(request: &AiGoalRequest, response: AiGoalTransportResponse) {
 
         let encoded = serde_json::to_vec(&recommendation)
             .expect("accepted goal recommendation must serialize");
-        let decoded: AiGoalRecommendation = serde_json::from_slice(&encoded)
-            .expect("serialized goal recommendation must parse");
+        let decoded: AiGoalRecommendation =
+            serde_json::from_slice(&encoded).expect("serialized goal recommendation must parse");
         assert_eq!(decoded, recommendation);
     }
 }
