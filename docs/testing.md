@@ -29,24 +29,85 @@ Integration tests must never use a developer's real home directory or production
 
 Coverage-guided fuzzing is appropriate for tidyfs where attacker-controlled, model-controlled, or unusually shaped input crosses a parser or validation boundary. It is less useful for tests that primarily depend on filesystem timing or large directory trees, where deterministic integration tests provide better diagnostics.
 
-The initial fuzz target is `fuzz/fuzz_targets/ai_proposal_json.rs`. It feeds arbitrary model-style JSON into `AiCleanupProposal`, validates accepted proposals, and asserts that accepted values serialize and deserialize without semantic change.
+### Maintained fuzz targets
+
+The maintained cargo-fuzz targets deliberately stay on pure, side-effect-free trust boundaries:
+
+| Target | Boundary | Accepted-value invariants |
+| --- | --- | --- |
+| `ai_proposal_json` | model-controlled `AiCleanupProposal` JSON | accepted proposal validates and round-trips without semantic change |
+| `ai_transport_response_json` | candidate-analysis response envelope plus proposal validation | request/observation binding holds, proposal validates, and the accepted action is explicitly request-allowed |
+| `ai_goal_response_json` | goal-recommendation response envelope plus recommendation validation | request/plan binding holds, recommendation validates, and every accepted selected ID was supplied by tidyfs |
+
+The transport/goal targets exercise two paths for each fuzz input:
+
+1. parse it as the full untrusted response envelope and run the real binding validator;
+2. when the inner proposal/recommendation parses, place it inside a known-valid request binding and run the validator again.
+
+The second path prevents fuzz coverage from stopping at shallow request-ID/digest mismatches and drives mutations into bounded text, provenance, action/ID, cardinality, and semantic validation.
+
+Each target has a valid seed corpus under `fuzz/corpus/<target>/` so scheduled fuzzing reaches deep validation paths early.
+
+### Toolchain and local workflow
 
 The fuzz harness uses a pinned nightly compiler and a pinned `cargo-fuzz` release. Install the same versions locally with:
 
 ```bash
 rustup toolchain install nightly-2026-08-12
 cargo install cargo-fuzz --version 0.13.2 --locked
-mise run fuzz-ai-build
-mise run fuzz-ai
+mise run fuzz-build
 ```
 
-Pull-request CI deterministically builds the fuzz harness so a broken target cannot merge unnoticed. Coverage-guided fuzz execution itself remains scheduled/manual rather than a pull-request blocker. When scheduled/manual fuzzing fails, CI preserves `fuzz/artifacts/` as a short-lived workflow artifact so the failing input can be reproduced. Any discovered crash or invariant violation should be minimized into a deterministic regression test before the fix is merged.
+Run short local campaigns across every maintained target with:
+
+```bash
+mise run fuzz
+```
+
+The all-target local campaign gives each target 30 seconds with a 5-second individual-input timeout and 2 GiB RSS limit. The original proposal-only compatibility tasks remain available as `mise run fuzz-ai-build` and `mise run fuzz-ai`.
+
+### CI cadence and resource bounds
+
+Pull-request CI is deterministic: it **builds every maintained fuzz target** so broken harnesses cannot merge unnoticed, but it does not execute coverage-guided campaigns as a PR blocker.
+
+The dedicated `Fuzz` workflow executes coverage-guided campaigns:
+
+- weekly at the existing Sunday schedule;
+- on explicit `workflow_dispatch`;
+- one matrix job per maintained target;
+- 60 seconds maximum fuzz time per target;
+- 5 seconds maximum for one input;
+- 2 GiB libFuzzer RSS limit;
+- 10-minute outer GitHub job timeout;
+- fail-fast disabled so one crashing boundary does not hide results from the others.
+
+The workflow is self-cancelling for superseded runs on the same ref. Fuzzing remains bounded and side-effect-free; it does not invoke filesystem cleanup, recovery, adapter commands, or a live model provider.
+
+### Crash artifact retention and reproduction
+
+A failed matrix job uploads only that target's `fuzz/artifacts/<target>/` directory for 14 days using an artifact name that includes the target and workflow run ID.
+
+To reproduce a retained crash locally:
+
+```bash
+# after downloading/unpacking the workflow artifact
+rustup toolchain install nightly-2026-08-12
+cargo install cargo-fuzz --version 0.13.2 --locked
+cargo +nightly-2026-08-12 fuzz run <target> /path/to/crash-or-timeout-artifact
+```
+
+For example:
+
+```bash
+cargo +nightly-2026-08-12 fuzz run ai_goal_response_json ./crash-0123456789abcdef
+```
+
+Minimize a reproducer when useful with cargo-fuzz/libFuzzer tooling, then convert every confirmed crash or invariant violation into a deterministic unit/integration regression before merging the fix. The fuzz artifact is discovery evidence, not the permanent regression test.
 
 Good future fuzz/property targets include:
 
 - rules/configuration deserialization;
 - path normalization and candidate identity inputs;
-- cleanup-plan deserialization and validation;
 - recovery metadata/state-machine inputs.
 
 Avoid fuzzing destructive operations directly against a real filesystem. Use pure validation boundaries or an isolated synthetic filesystem harness.
@@ -60,7 +121,7 @@ Required AI tests should cover:
 - schema/version rejection;
 - unknown or malformed fields;
 - confidence, size, and cardinality bounds;
-- request and observation binding;
+- request and observation/plan binding;
 - action/risk safety constraints;
 - provenance handling;
 - serialization round trips for accepted values.
@@ -87,7 +148,7 @@ Run the deterministic pull-request gate locally with:
 
 ```bash
 mise run ci
-mise run fuzz-ai-build
+mise run fuzz-build
 ```
 
-The first command runs static analysis, the full deterministic test suite, and Cargo package verification. The second reproduces the deterministic fuzz-harness build used by pull-request CI. Dependency auditing remains a separate task because `cargo-audit` is an optional Cargo subcommand rather than part of the standard Rust toolchain.
+The first command runs static analysis, the full deterministic test suite, and Cargo package verification. The second reproduces the deterministic all-target fuzz-harness build used by pull-request CI. Dependency auditing remains a separate task because `cargo-audit` is an optional Cargo subcommand rather than part of the standard Rust toolchain.
