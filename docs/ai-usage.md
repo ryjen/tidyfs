@@ -76,12 +76,13 @@ The planner sends AI only paths that deterministic rules and protected-category 
 After inference, tidyfs:
 
 1. validates the response schema and request/provenance correlation;
-2. re-queries authoritative scan/index facts;
-3. re-derives the observation digest;
-4. rejects stale or mismatched advice;
-5. applies one-way conservative conflict policy;
-6. reapplies the selected risk threshold;
-7. persists plan candidates and advisory evidence only after the selected AI calls complete successfully.
+2. rejects any proposed candidate-level action that is not listed in the request's explicit `allowed_actions` constraint;
+3. re-queries authoritative scan/index facts;
+4. re-derives the observation digest;
+5. rejects stale or mismatched advice;
+6. applies one-way conservative conflict policy;
+7. reapplies the selected risk threshold;
+8. persists plan candidates and advisory evidence only after the selected AI calls complete successfully.
 
 The model cannot make a previously ineligible candidate executable.
 
@@ -206,7 +207,7 @@ These conditions fail closed:
 - malformed JSON;
 - unknown contract/schema version;
 - unknown response fields;
-- unsupported action;
+- unsupported or request-disallowed action;
 - mismatched request ID;
 - mismatched provenance request ID;
 - mismatched/stale observation or goal-plan digest;
