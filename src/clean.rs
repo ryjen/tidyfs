@@ -555,7 +555,9 @@ fn print_candidate(candidate: &Candidate) {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{load_allowed_candidates, verify_candidate_at_path, verify_scanned_identity, Candidate};
+    use super::{
+        load_allowed_candidates, verify_candidate_at_path, verify_scanned_identity, Candidate,
+    };
     use crate::db::Database;
     use crate::rules::Risk;
     use rusqlite::params;
@@ -633,7 +635,10 @@ mod tests {
 
         let candidates = load_allowed_candidates(&database, 42).expect("load canonical candidates");
         assert_eq!(
-            candidates.iter().map(|candidate| candidate.id).collect::<Vec<_>>(),
+            candidates
+                .iter()
+                .map(|candidate| candidate.id)
+                .collect::<Vec<_>>(),
             vec![2]
         );
 
