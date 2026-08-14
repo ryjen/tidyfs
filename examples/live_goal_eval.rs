@@ -2,7 +2,6 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -441,25 +440,12 @@ fn print_report(path: &Path, report: &EvaluationReport) {
                 .unwrap_or_else(|| "n/a".to_owned())
         );
     }
-    println!("json_report: {}", terminal_safe(&path.display().to_string()));
+    println!(
+        "json_report: {}",
+        terminal_safe(&path.display().to_string())
+    );
 }
 
 fn terminal_safe(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for character in value.chars() {
-        let bidi_control = matches!(
-            character,
-            '\u{200e}'
-                | '\u{200f}'
-                | '\u{202a}'..='\u{202e}'
-                | '\u{2066}'..='\u{2069}'
-        );
-        if character.is_control() || bidi_control {
-            write!(&mut output, "\\u{{{:x}}}", character as u32)
-                .expect("writing to String cannot fail");
-        } else {
-            output.push(character);
-        }
-    }
-    output
+    value.chars().flat_map(char::escape_default).collect()
 }
