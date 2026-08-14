@@ -136,6 +136,10 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
         }
     }
 
+    // Canonicalize before optional inference so AI never receives duplicate or overlapping
+    // filesystem payloads. Blocked/stricter descendants still suppress ancestors.
+    candidates = canonicalize_plan_candidates(candidates);
+
     let evidence = if let Some(endpoint) = &query.ai_endpoint {
         analyze_plan_candidates(
             database,
@@ -175,6 +179,40 @@ pub fn run_plan(database: &mut Database, query: PlanQuery) -> Result<()> {
     );
 
     Ok(())
+}
+
+fn canonicalize_plan_candidates(candidates: Vec<PlannedCandidate>) -> Vec<PlannedCandidate> {
+    let decisions = {
+        let inputs: Vec<_> = candidates
+            .iter()
+            .map(|candidate| rules::HierarchyInput {
+                path: &candidate.path,
+                risk: candidate.risk,
+                blocked: candidate.blocked,
+                blocked_reason: candidate.blocked_reason.as_deref(),
+                reversible: candidate.reversible,
+                action_type: &candidate.action_type,
+                rule_id: &candidate.rule_id,
+            })
+            .collect();
+        rules::canonicalize_hierarchy(&inputs)
+    };
+
+    decisions
+        .into_iter()
+        .map(|decision| {
+            let mut candidate = candidates[decision.source_index].clone();
+            candidate.risk = decision.effective_risk;
+            candidate.blocked = decision.blocked;
+            let prior_reason = candidate.blocked_reason.take();
+            candidate.blocked_reason = if candidate.blocked {
+                decision.blocked_reason.or(prior_reason)
+            } else {
+                None
+            };
+            candidate
+        })
+        .collect()
 }
 
 fn invalidate_prior_ai_plan(database: &mut Database, scan_id: i64) -> Result<()> {
@@ -533,6 +571,50 @@ mod tests {
             "tidyfs-ai-plan-dry-run-{}-{nonce}",
             std::process::id()
         ))
+    }
+
+    fn planned(path: &str, risk: Risk, rule_id: &str) -> PlannedCandidate {
+        PlannedCandidate {
+            path: PathBuf::from(path),
+            size_bytes: 1024,
+            rule_id: rule_id.to_owned(),
+            rule_label: rule_id.to_owned(),
+            category: "cache".to_owned(),
+            risk,
+            action_type: "quarantine".to_owned(),
+            reversible: true,
+            reason: "test".to_owned(),
+            blocked: false,
+            blocked_reason: None,
+            ai: None,
+        }
+    }
+
+    #[test]
+    fn plan_hierarchy_preserves_highest_exact_risk_and_suppresses_ancestor() {
+        let candidates = vec![
+            planned("/cache", Risk::Low, "parent-low"),
+            planned("/cache", Risk::Medium, "parent-medium"),
+            planned("/cache/sub", Risk::Low, "child"),
+        ];
+
+        let canonical = canonicalize_plan_candidates(candidates);
+        assert_eq!(canonical.len(), 2);
+        let parent = canonical
+            .iter()
+            .find(|candidate| candidate.path == Path::new("/cache"))
+            .expect("canonical parent");
+        let child = canonical
+            .iter()
+            .find(|candidate| candidate.path == Path::new("/cache/sub"))
+            .expect("canonical child");
+        assert_eq!(parent.risk, Risk::Medium);
+        assert!(parent.blocked);
+        assert!(parent
+            .blocked_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("overlapping descendant")));
+        assert!(!child.blocked);
     }
 
     #[test]
