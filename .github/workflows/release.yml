@@ -25,6 +25,7 @@ on:
 permissions:
   contents: read
 
+# PR validation is replaceable; tag/manual publication serializes by bare tag and is never cancelled in progress.
 concurrency:
   group: release-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
