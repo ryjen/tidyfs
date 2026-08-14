@@ -144,6 +144,36 @@ scan/index facts
 
 AI may preserve or reduce existing deterministic authority; it may not increase it.
 
+## Milestone 8: Goal-oriented advisory planning — first slice
+
+QART #51 selected goal-oriented advisory planning over existing deterministic candidates as the post-`v0.6.1` product direction. ADR 0001 records the authority boundary.
+
+The first slice adds a read-only recommendation workflow:
+
+```text
+persisted deterministic plan
+  -> selected filesystem root
+  -> exact-path canonicalization using highest deterministic risk
+  -> suppress ancestors that contain any descendant candidate
+  -> require leaf path to be unblocked + reversible + quarantine
+  -> apply requested risk threshold
+  -> bounded reclaim target + non-overlapping candidate IDs
+  -> /v1/recommend
+  -> strict request/provenance/plan binding validation
+  -> authoritative plan re-read after inference
+  -> selected-ID subset validation
+  -> tidyfs-computed reclaim bytes and target_met
+  -> read-only output
+```
+
+The model may choose only candidate IDs supplied by `tidyfs`. It cannot create candidates, lower deterministic risk, remove blocks, broaden the root, determine authoritative byte totals, persist executable authority, or trigger cleanup.
+
+The first slice intentionally exposes only leaf-most, pairwise non-overlapping filesystem paths. A descendant candidate suppresses its ancestor even when the descendant is blocked or above the requested risk threshold. This can conservatively undercount reclaimable bytes, but it avoids double-counting and prevents an ancestor recommendation from bypassing stricter child policy.
+
+The deterministic planner/executor still needs one shared hierarchy policy for plan totals, dry-run, and execution. That broader correctness work is tracked in #62 rather than being coupled to this read-only AI slice.
+
+The first slice intentionally uses a numeric reclaim target rather than a free-form natural-language goal. Recommendation output remains separate from `clean` and does not modify cleanup/action state.
+
 ## Current release baseline
 
 `v0.6.1` is the current validated public Linux release baseline.
@@ -157,16 +187,14 @@ The release record includes:
 - independent retained-artifact verification;
 - binary smoke tests.
 
-## Next milestone: decision pending
+## Deferred decisions
 
 Do not treat the old “AI explainer / Ollama/OpenAI-compatible client / ask command” section as an active implementation plan. The implemented provider boundary deliberately avoids coupling the core to a generic chat API or hosted-provider SDK.
 
-The post-`v0.6.1` product milestone is being decided in **QART #51**.
-
-The current recommendation is a bounded **goal-oriented advisory planning** layer over an existing deterministic plan, for workflows such as “what is the lowest-risk existing cleanup set that reclaims at least 20 GB?” The recommendation must remain structured, freshness-bound, independently validated, and non-authoritative for execution.
-
 Explicitly deferred until separately justified:
 
+- deterministic hierarchy canonicalization across plan/clean (#62);
+- natural-language/free-form goal parsing;
 - non-loopback/remote model transport;
 - AI-generated enabled rules;
 - tool-native cleanup execution;

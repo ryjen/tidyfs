@@ -16,19 +16,16 @@ filesystem + adapters
         v
  optional bounded AI analysis/recommendation
         |
-   versioned proposal
+   versioned proposal/selection
         |
         v
  transport/schema/correlation validation
         |
         v
- authoritative observation revalidation
+ authoritative observation/plan revalidation
         |
         v
- conservative conflict resolution
-        |
-        v
- selected user risk threshold
+ deterministic risk + byte calculations
         |
         v
  explicit approval
@@ -37,7 +34,7 @@ filesystem + adapters
  reversible quarantine/recovery
 ```
 
-The model is an advisor. Deterministic facts, policy, risk gates, explicit approval, and the existing reversible executor remain authoritative.
+The model is an advisor. Deterministic facts, policy, risk gates, byte calculations, explicit approval, and the existing reversible executor remain authoritative.
 
 ## Current AI responsibilities
 
@@ -47,9 +44,8 @@ AI may:
 - explain why space is being consumed;
 - recommend `ignore`, `review`, or `quarantine` for an already-observed candidate;
 - raise effective risk or make an otherwise eligible deterministic candidate review-only;
-- provide rationale, caveats, confidence, and provider/model provenance.
-
-Future advisory capabilities may include grouping/ranking deterministic candidates, translating a bounded user reclaim goal into a recommendation over an existing deterministic plan, and drafting disabled rule suggestions for review.
+- provide rationale, caveats, confidence, and provider/model provenance;
+- select and explain a subset of existing eligible persisted plan candidate IDs for a bounded numeric reclaim target.
 
 These are reasoning tasks. They do not grant mutation authority.
 
@@ -66,16 +62,19 @@ The current `AiCleanupProposal` action vocabulary is limited to:
 Even `quarantine` is only advisory. AI is evaluated only after deterministic rules and protected-category policy have already made a candidate eligible for reversible quarantine. The model cannot:
 
 - create a new executable candidate;
+- select a goal candidate ID not supplied by tidyfs;
 - lower deterministic risk;
 - remove a deterministic block;
 - convert `report_only` or `tool_native` work into filesystem mutation;
 - broaden the selected root;
+- determine authoritative reclaim-byte totals;
+- persist a goal recommendation as executable authority;
 - authorize permanent deletion;
 - bypass `clean --safe --interactive` or any identity/recovery check.
 
-## Proposal validation
+## Candidate-level proposal validation
 
-Every AI proposal is untrusted input and must satisfy a versioned schema before later planning stages can consume it. Validation includes:
+Every candidate-level AI proposal is untrusted input and must satisfy a versioned schema before later planning stages can consume it. Validation includes:
 
 - exact supported schema version;
 - non-empty bounded classification;
@@ -87,9 +86,9 @@ Every AI proposal is untrusted input and must satisfy a versioned schema before 
 
 Unknown schema versions, malformed output, unsupported actions, and provider failures fail closed.
 
-## Observation identity and freshness
+## Candidate observation identity and freshness
 
-AI recommendations are bound to the exact post-privacy facts sent to inference.
+Candidate-level recommendations are bound to the exact post-privacy facts sent to inference.
 
 ```text
 scan/index candidate
@@ -130,21 +129,83 @@ When an already-eligible deterministic quarantine candidate is enriched by AI:
 
 This creates a one-way authority rule: **AI may preserve or reduce existing deterministic authority, never increase it.**
 
+## Goal-oriented advisory planning
+
+ADR 0001 accepts a second read-only AI task: selecting among candidates in an existing persisted plan for a bounded reclaim target.
+
+```text
+persisted cleanup_candidates
+        |
+        v
+scope to selected filesystem root
+        |
+        v
+canonicalize exact-path rule matches using highest deterministic risk
+        |
+        v
+suppress every ancestor that has any descendant candidate
+        |
+        v
+require leaf candidate to be unblocked + reversible + quarantine
+        |
+        v
+apply requested risk threshold
+        |
+        v
+bounded non-overlapping candidate IDs/facts + numeric reclaim target
+        |
+        v
+opaque goal/plan freshness digest
+        |
+        v
+POST /v1/recommend
+        |
+        v
+strict request/provenance/digest + selected-ID validation
+        |
+        v
+re-read persisted plan with identical rules
+        |
+        v
+exact fact comparison + digest re-derivation
+        |
+        v
+tidyfs sums selected bytes and computes target_met
+        |
+        v
+read-only terminal output
+```
+
+The model returns selected candidate IDs plus rationale/caveats. It does not own the byte total. `tidyfs` calculates reclaim bytes from the revalidated current non-overlapping candidate set and determines whether the target is met.
+
+Multiple deterministic rules may match one path. Goal recommendation first collapses exact-path matches using the highest deterministic risk. Any blocked, non-reversible, or non-quarantine match for that exact path makes the path unavailable to this advisory slice. This prevents a lower-risk or more permissive duplicate from becoming the model-visible representative.
+
+The deterministic planner can also persist ancestor and descendant candidates independently. Counting or selecting both would count the same physical payload more than once. The first goal-recommendation slice therefore exposes only **leaf-most, pairwise non-overlapping filesystem paths**. The presence of any descendant candidate suppresses an ancestor even when the descendant is blocked or above the requested risk threshold. This prevents an ancestor from becoming an advisory shortcut around stricter child policy.
+
+This leaf-most rule is deliberately conservative. It can understate reclaimable bytes because bytes unique to a suppressed ancestor are not attributed to a leaf candidate. That can produce `target_met: false` even when a future hierarchy-aware deterministic planner could safely reclaim more. Undercounting is the fail-safe result for this read-only slice; double-counting or policy bypass is not acceptable. Core planner/executor hierarchy semantics are tracked separately in issue #62.
+
+The goal/plan digest is an opaque correlation and freshness binding, not an authentication token or capability. The authoritative stale-state defense is the post-inference persisted-plan re-read and exact comparison of the facts supplied to inference.
+
+Goal recommendations are not written back as cleanup authority. `clean` consumes the persisted deterministic plan under its existing risk, approval, identity, quarantine, and recovery rules. Issue #62 tracks deterministic hierarchy canonicalization for plan totals, dry-run, and execution; this PR does not silently change those mutation semantics.
+
 ## Provider boundary
 
-`AiAnalysisProvider` is the provider-neutral port. It accepts bounded `AiAnalysisRequest` facts and returns an `AiCleanupProposal` or provider error. `analyze_validated` independently validates returned proposals.
+`AiAnalysisProvider` remains the provider-neutral candidate-analysis port. It accepts bounded `AiAnalysisRequest` facts and returns an `AiCleanupProposal` or provider error. `analyze_validated` independently validates returned proposals.
 
 The core provider interface contains no hosted-provider SDK, credentials, generic chat/messages API, MCP/tool invocation, or filesystem mutation capability.
 
-The implemented v1 adapter is `LoopbackGatewayProvider`, which uses a narrow HTTP transport:
+`LoopbackGatewayProvider` supplies two narrow structured HTTP tasks:
 
 ```http
 POST /v1/analyze
+POST /v1/recommend
 Content-Type: application/json
 Accept: application/json
 ```
 
-Runtime constraints:
+`/v1/analyze` handles one bound candidate observation. `/v1/recommend` handles a bounded goal plus an explicit set of already-eligible, non-overlapping candidate IDs/facts.
+
+Runtime constraints are shared:
 
 - numeric loopback address only (`127.0.0.0/8` or `::1`);
 - explicit non-zero port;
@@ -155,13 +216,13 @@ Runtime constraints:
 - no transfer encoding/chunked response support;
 - bounded request, header, and response sizes;
 - connect/read/write timeouts;
-- exact request-ID, provenance-ID, and observation-digest correlation.
+- exact request/provenance and observation-or-plan correlation.
 
 A non-loopback/remote provider is intentionally **not** a configuration toggle. Remote inference would introduce TLS, authentication/capability identity, endpoint-policy, credential, privacy, and operational obligations and should be designed as a separate security decision.
 
 ## Privacy and data minimization
 
-The inference contract contains metadata only. Arbitrary file contents are not sent.
+The inference contracts contain metadata only. Arbitrary file contents are not sent.
 
 Supported path modes:
 
@@ -169,11 +230,13 @@ Supported path modes:
 - `basename` — basename only;
 - `redacted` — remove user/project-specific prefixes while preserving useful ecosystem structure such as `.cache`, `.gradle/caches`, `DerivedData`, `node_modules`, and `/nix/store`.
 
-`tidyfs analyze` permits an explicitly selected loopback model to receive full paths. AI-enriched planning defaults to `redacted` because the model only needs enough structure to advise on an already-deterministic candidate.
+`tidyfs analyze` permits an explicitly selected loopback model to receive full paths. AI-enriched planning and goal-oriented `recommend` default to `redacted` because the model only needs enough structure to advise on candidates whose eligibility is already determined by tidyfs.
+
+The path privacy transformation is shared between candidate analysis and goal recommendation so the two inference routes cannot silently diverge in redaction behavior.
 
 ## Provenance and explainability
 
-Accepted recommendations retain enough evidence to explain their origin and freshness:
+Accepted candidate-level recommendations retain enough evidence to explain their origin and freshness:
 
 - scan and stable candidate identity;
 - path privacy mode;
@@ -184,7 +247,9 @@ Accepted recommendations retain enough evidence to explain their origin and fres
 - provider, model, and request ID;
 - selected risk context.
 
-`tidyfs explain <path>` re-derives current authoritative observation facts and reports stored AI evidence as fresh or stale.
+`tidyfs explain <path>` re-derives current authoritative observation facts and reports stored candidate-level AI evidence as fresh or stale.
+
+Goal recommendations are intentionally ephemeral in the first slice. Terminal output reports the request/plan binding, selected candidates, tidyfs-computed reclaim bytes, `target_met`, model provenance, rationale, and caveats without modifying cleanup/action authority.
 
 Model-controlled terminal and bidirectional-control characters are escaped before display.
 
@@ -196,8 +261,13 @@ Tests and integration behavior cover:
 - unknown schema versions and unknown response fields;
 - invalid confidence/risk/action values;
 - hallucinated/unsupported action names;
-- prompt-injection text attempting to override policy;
+- prompt-injection/control text attempting to override policy or terminal rendering;
 - stale/nonexistent/changed candidates;
+- stale or changed persisted goal-plan facts;
+- unknown or duplicate goal-selected candidate IDs;
+- exact-path risk canonicalization;
+- ancestor/descendant overlap suppression and reclaim-byte non-overlap;
+- stricter or blocked descendants suppressing ancestors from goal advice;
 - request-ID, provenance-ID, and digest mismatch;
 - non-loopback/hostname endpoint rejection;
 - redirects, transfer encoding, wrong content type, and oversized responses;
@@ -205,10 +275,13 @@ Tests and integration behavior cover:
 - deterministic risk not being lowered by AI;
 - `review`, `ignore`, and low-confidence recommendations remaining non-executable;
 - AI being unable to promote report-only/tool-native work;
+- goal recommendation computing byte totals locally and performing no action/candidate mutation;
 - end-to-end AI-enriched planning followed by `clean --dry-run` with no filesystem mutation.
 
 The safe failure mode for AI remains: **no accepted recommendation and no additional filesystem authority.**
 
-## Next decision
+## Deferred decisions
 
-The current architecture is sufficient for candidate-level local AI analysis and conservative planning. The post-`v0.6.1` product direction is tracked in QART issue #51 rather than assuming that remote transport, rule generation, or tool-native execution is the next step.
+Goal-oriented advisory planning is the accepted post-`v0.6.1` direction. The first slice intentionally accepts a structured numeric reclaim target rather than a free-form goal.
+
+AI-generated disabled rule proposals, natural-language goal parsing, non-loopback transport, tool-native cleanup execution, and the full deterministic hierarchy policy from #62 remain separate future decisions.

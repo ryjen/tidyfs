@@ -2,6 +2,9 @@ use crate::ai::AiCleanupProposal;
 use crate::ai_contract::{
     validate_transport_response, AiObservationBinding, AiTransportRequest, AiTransportResponse,
 };
+use crate::ai_goal::{
+    validate_goal_response, AiGoalRecommendation, AiGoalRequest, AiGoalTransportResponse,
+};
 use crate::ai_provider::{AiAnalysisProvider, AiAnalysisRequest, AiProviderError};
 use serde::Deserialize;
 use std::io::{Read, Write};
@@ -11,6 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const ANALYZE_PATH: &str = "/v1/analyze";
+const RECOMMEND_PATH: &str = "/v1/recommend";
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const HEADER_TERMINATOR_BYTES: usize = 4;
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -71,6 +75,27 @@ impl LoopbackGatewayProvider {
         Self { config }
     }
 
+    pub fn recommend_goal(
+        &self,
+        request: &AiGoalRequest,
+    ) -> Result<AiGoalRecommendation, AiProviderError> {
+        request
+            .validate()
+            .map_err(|error| invalid(format!("goal request rejected: {error}")))?;
+
+        let body = serde_json::to_vec(request)
+            .map_err(|error| invalid(format!("serializing goal gateway request: {error}")))?;
+        if body.len() > self.config.max_request_bytes {
+            return Err(invalid("gateway request exceeds configured size limit"));
+        }
+
+        let raw = self.post_json(RECOMMEND_PATH, &body)?;
+        let response: AiGoalTransportResponse = serde_json::from_slice(&raw)
+            .map_err(|error| invalid(format!("invalid goal gateway JSON response: {error}")))?;
+        validate_goal_response(request, response)
+            .map_err(|error| invalid(format!("goal gateway response rejected: {error}")))
+    }
+
     fn analyze_transport(
         &self,
         analysis: &AiAnalysisRequest,
@@ -92,7 +117,7 @@ impl LoopbackGatewayProvider {
             return Err(invalid("gateway request exceeds configured size limit"));
         }
 
-        let raw = self.post_json(&body)?;
+        let raw = self.post_json(ANALYZE_PATH, &body)?;
         let strict: StrictGatewayResponse = serde_json::from_slice(&raw)
             .map_err(|error| invalid(format!("invalid gateway JSON response: {error}")))?;
         if strict.proposal.provenance.request_id.as_deref() != Some(strict.request_id.as_str()) {
@@ -113,7 +138,7 @@ impl LoopbackGatewayProvider {
             .map_err(|error| invalid(format!("gateway response rejected: {error}")))
     }
 
-    fn post_json(&self, body: &[u8]) -> Result<Vec<u8>, AiProviderError> {
+    fn post_json(&self, path: &str, body: &[u8]) -> Result<Vec<u8>, AiProviderError> {
         let mut stream =
             TcpStream::connect_timeout(&self.config.address, self.config.connect_timeout)
                 .map_err(|error| unavailable(format!("connecting to loopback gateway: {error}")))?;
@@ -126,7 +151,7 @@ impl LoopbackGatewayProvider {
 
         let host = host_header(self.config.address);
         let headers = format!(
-            "POST {ANALYZE_PATH} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nAccept: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nAccept: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         );
         stream
@@ -156,6 +181,10 @@ impl AiAnalysisProvider for LoopbackGatewayProvider {
     fn analyze(&self, request: &AiAnalysisRequest) -> Result<AiCleanupProposal, AiProviderError> {
         self.analyze_transport(request)
     }
+}
+
+pub fn new_gateway_request_id() -> String {
+    next_request_id()
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,6 +320,7 @@ mod tests {
     use super::*;
     use crate::ai::{AiRecommendedAction, AiRisk};
     use crate::ai_contract::{AiDeterministicFacts, AiObservation, AiPathMode};
+    use crate::ai_goal::{AiGoalCandidate, AiGoalRequest};
     use std::net::TcpListener;
     use std::thread;
 
@@ -311,6 +341,25 @@ mod tests {
             },
             adapter: None,
         })
+    }
+
+    fn goal_request() -> AiGoalRequest {
+        AiGoalRequest::new(
+            "req-goal".to_owned(),
+            42,
+            vec![AiGoalCandidate {
+                candidate_id: 7,
+                path: "<redacted>/.cache/pip".to_owned(),
+                path_mode: AiPathMode::Redacted,
+                size_bytes: 4096,
+                risk: "low".to_owned(),
+                rule_id: "cache-pip".to_owned(),
+                category: "cache".to_owned(),
+            }],
+            2048,
+            "low".to_owned(),
+            None,
+        )
     }
 
     #[test]
@@ -385,6 +434,50 @@ mod tests {
     }
 
     #[test]
+    fn local_goal_gateway_round_trip_uses_recommend_route_and_validates_selection() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake gateway");
+        let address = listener.local_addr().expect("local address");
+        let request = goal_request();
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let (path, body) = read_http_request_with_path(&mut stream);
+            assert_eq!(path, RECOMMEND_PATH);
+            let transport: AiGoalRequest = serde_json::from_slice(&body).expect("request JSON");
+            let response = serde_json::json!({
+                "contract_version": 1,
+                "request_id": transport.request_id,
+                "plan_digest": transport.plan_digest,
+                "recommendation": {
+                    "schema_version": 1,
+                    "selected_candidate_ids": [7],
+                    "rationale": ["largest supplied low-risk candidate"],
+                    "caveats": [],
+                    "provenance": {
+                        "provider": "fake",
+                        "model": "goal-test",
+                        "request_id": transport.request_id
+                    }
+                }
+            });
+            write_json_response(&mut stream, &serde_json::to_vec(&response).unwrap());
+        });
+
+        let provider = LoopbackGatewayProvider::new(LoopbackGatewayConfig {
+            address,
+            connect_timeout: Duration::from_secs(1),
+            io_timeout: Duration::from_secs(1),
+            max_request_bytes: 16 * 1024,
+            max_response_bytes: 16 * 1024,
+        });
+        let recommendation = provider
+            .recommend_goal(&request)
+            .expect("valid recommendation");
+        assert_eq!(recommendation.selected_candidate_ids, vec![7]);
+        server.join().unwrap();
+    }
+
+    #[test]
     fn rejects_redirect_wrong_content_type_transfer_encoding_and_oversized_response() {
         let redirect = b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
         assert!(parse_http_response(redirect, 1024).is_err());
@@ -423,6 +516,10 @@ mod tests {
     }
 
     fn read_http_request(stream: &mut TcpStream) -> Vec<u8> {
+        read_http_request_with_path(stream).1
+    }
+
+    fn read_http_request_with_path(stream: &mut TcpStream) -> (String, Vec<u8>) {
         let mut request = Vec::new();
         let mut buffer = [0_u8; 4096];
         loop {
@@ -434,8 +531,14 @@ mod tests {
                 .position(|window| window == b"\r\n\r\n")
             {
                 let headers = std::str::from_utf8(&request[..boundary]).unwrap();
-                let length = headers
-                    .lines()
+                let mut lines = headers.lines();
+                let request_line = lines.next().expect("request line");
+                let path = request_line
+                    .split_whitespace()
+                    .nth(1)
+                    .expect("request path")
+                    .to_owned();
+                let length = lines
                     .find_map(|line| {
                         let (name, value) = line.split_once(':')?;
                         name.eq_ignore_ascii_case("content-length")
@@ -445,7 +548,7 @@ mod tests {
                     .unwrap();
                 if request.len() >= boundary + HEADER_TERMINATOR_BYTES + length {
                     let start = boundary + HEADER_TERMINATOR_BYTES;
-                    return request[start..start + length].to_vec();
+                    return (path, request[start..start + length].to_vec());
                 }
             }
         }

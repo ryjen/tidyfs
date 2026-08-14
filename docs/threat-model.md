@@ -29,36 +29,34 @@ authoritative SQLite scan facts
     v
 deterministic classification + rules + protected-category policy
     |
-    +-------------------------------+
-    | optional bounded AI advisory  |
-    | local numeric-loopback gateway|
-    +---------------+---------------+
-                    |
-                    v
+    +----------------------------------+
+    | optional bounded AI advisory     |
+    | candidate analysis / goal select |
+    | local numeric-loopback gateway   |
+    +----------------+-----------------+
+                     |
+                     v
         strict schema/correlation validation
-                    |
-                    v
-        authoritative observation revalidation
-                    |
-                    v
-        conservative conflict resolution
-                    |
-                    v
-        selected user risk threshold
-                    |
-                    v
+                     |
+                     v
+      authoritative observation/plan revalidation
+                     |
+                     v
+      deterministic risk + byte calculations
+                     |
+                     v
           explicit interactive approval
-                    |
-                    v
+                     |
+                     v
         reversible quarantine executor
-                    |
-                    v
+                     |
+                     v
           durable recovery / restore
 ```
 
 The filesystem executor is the highest-impact authority. AI and adapter inspection are deliberately outside that authority boundary.
 
-AI is an **untrusted advisory principal**. A configured local gateway may classify, explain, or recommend, but it cannot create an executable candidate, lower deterministic risk, remove a policy block, execute adapter cleanup, invoke arbitrary shell commands, authorize permanent deletion, or call filesystem mutation primitives.
+AI is an **untrusted advisory principal**. A configured local gateway may classify, explain, recommend, or select among candidate IDs explicitly supplied by `tidyfs`, but it cannot create an executable candidate, lower deterministic risk, remove a policy block, execute adapter cleanup, invoke arbitrary shell commands, authorize permanent deletion, or call filesystem mutation primitives.
 
 ## Main threats
 
@@ -95,33 +93,68 @@ A non-cooperating external writer can still race the final pathname metadata che
 
 Causes:
 
-- hallucinated actions or paths
+- hallucinated actions, candidate IDs, or paths
 - prompt-injection text embedded in filesystem metadata
 - a compromised or buggy local model gateway
 - stale recommendations replayed against changed facts
 - model attempts to lower risk or override deterministic policy
 - persuasive explanation being mistaken for authorization
+- model-authored reclaim totals being mistaken for authoritative facts
 
 Mitigations:
 
-- versioned typed proposal contract
-- restricted action vocabulary: `ignore`, `review`, `quarantine`
+- versioned typed proposal and goal-recommendation contracts
+- candidate-level action vocabulary restricted to `ignore`, `review`, `quarantine`
+- goal recommendations may select only IDs explicitly supplied by `tidyfs`
 - strict response deserialization and bounded model-controlled text
-- request ID and observation-digest correlation
-- candidate identity bound to authoritative scan/index facts
-- post-inference authoritative observation reconstruction
+- request ID plus observation-or-plan binding correlation
+- candidate identity bound to authoritative scan/index or persisted plan facts
+- post-inference authoritative observation/plan reconstruction
 - deterministic blocks always win
 - effective risk can only stay equal or increase
-- low-confidence advice is review-only
-- AI is evaluated only for already-eligible reversible quarantine candidates
+- duplicate rule matches for one filesystem path are canonicalized using the highest deterministic risk before applying the requested threshold
+- low-confidence candidate advice is review-only
 - provider failure or invalid/stale output creates no accepted recommendation
-- AI evidence is advisory/audit data, never freshness authority
+- reclaim totals and `target_met` are calculated by `tidyfs`, not trusted from model output
+- goal recommendations are ephemeral advisory output and are not persisted as executable authority
 
 Residual risk:
 
-A malicious local gateway can lie in explanations, raise risk, or block otherwise eligible candidates. Under the current design it cannot broaden filesystem mutation authority. This is primarily an integrity/availability and path-privacy concern, not an executor-authority grant.
+A malicious local gateway can lie in explanations, raise risk, omit useful candidates, or choose a poor subset. Under the current design it cannot broaden filesystem mutation authority. This is primarily an integrity/availability and path-privacy concern, not an executor-authority grant.
 
-### 3. Gateway and privacy leakage
+### 3. Goal-selection overlap, double-counting, or risk reduction
+
+Causes:
+
+- the same path matching multiple deterministic rules
+- a lower-risk duplicate match hiding a higher-risk or blocked match
+- an ancestor and descendant both being persisted as cleanup candidates
+- counting ancestor and descendant bytes independently toward one reclaim target
+- recommending an ancestor that contains a blocked or stricter descendant
+- selecting unknown or duplicate candidate IDs
+- changing the persisted plan during model inference
+
+Mitigations:
+
+- goal recommendation reads the persisted plan but does not inherit every row as model-visible authority
+- exact-path rule matches are grouped before inference
+- exact-path effective risk is the maximum persisted deterministic risk
+- any blocked, non-reversible, or non-quarantine exact-path match suppresses that path from goal advice
+- all filesystem candidate paths in the selected root participate in hierarchy guarding, including blocked and over-threshold descendants
+- every ancestor that contains any descendant candidate is suppressed from goal advice
+- only leaf-most, pairwise non-overlapping filesystem paths can be supplied to the model
+- requested risk filtering happens after exact-path and hierarchy canonicalization
+- request candidate IDs are explicit and bounded
+- unknown or duplicate selected IDs are rejected
+- the exact model-visible candidate facts are re-read after inference
+- a plan/fact mismatch fails closed
+- selected reclaim bytes are summed only from the revalidated non-overlapping set
+
+Residual risk:
+
+The leaf-most first-slice policy deliberately undercounts bytes that exist only in a suppressed ancestor. A bounded candidate limit can also make a target unsatisfiable even when more eligible candidates exist. Both cases safely produce `target_met: false`; the model is not permitted to expand the candidate set or claim omitted bytes. Issue #62 tracks the shared deterministic hierarchy semantics needed for `plan`, dry-run, and execution.
+
+### 4. Gateway and privacy leakage
 
 Causes:
 
@@ -133,15 +166,16 @@ Mitigations:
 
 - current runtime accepts numeric loopback addresses only (`127.0.0.0/8` and `::1`)
 - no DNS resolution, redirects, credentials, or remote endpoint support in v1
-- no arbitrary file contents in the inference contract
+- no arbitrary file contents in inference contracts
 - explicit path modes: `full`, `basename`, `redacted`
-- AI-enriched planning defaults to `redacted`
+- AI-enriched planning and goal recommendation default to `redacted`
+- shared privacy transformation for candidate-analysis and goal-recommendation paths
 - bounded request and response sizes
 - explicit connect/read/write timeouts
 
 Remote inference is not a transparent extension of the current trust model. HTTPS, authentication/capability identity, endpoint policy, path disclosure, operational logging, and credential handling require a separate security decision before non-loopback transport is added.
 
-### 4. Command injection and external-tool authority
+### 5. Command injection and external-tool authority
 
 Causes:
 
@@ -160,24 +194,29 @@ Mitigations:
 
 Executing tool-native cleanup is a distinct future mutation boundary and requires its own command contract, recovery/observability model, and security review.
 
-### 5. TOCTOU and stale-state races
+### 6. TOCTOU and stale-state races
 
 Causes:
 
 - path changes between scan, planning, fingerprinting, and cleanup
 - candidate facts change while AI inference is running
+- persisted goal-plan facts change while recommendation inference is running
 - old AI evidence is replayed against a new observation
 
 Mitigations:
 
 - scan candidate identity is stable and tied to authoritative indexed facts
-- AI requests carry a deterministic observation digest
-- planning re-queries facts after inference and re-derives the digest
+- candidate analysis requests carry a deterministic observation digest
+- goal requests carry an opaque digest of the selected scan, goal constraints, and supplied candidate facts
+- planning/recommendation re-query authoritative facts after inference and re-derive the relevant binding
+- exact post-inference goal candidate facts must match the facts supplied before inference
 - cleanup rechecks source device/inode and rejects symlink transitions
 - payload device/inode and hash are verified after quarantine
 - stale or mismatched AI recommendations fail closed
 
-### 6. Supply-chain and release risk
+The goal-plan digest is a correlation/freshness binding, not an authentication token or capability. The authoritative defense is the post-inference persisted-plan re-read and exact fact comparison.
+
+### 7. Supply-chain and release risk
 
 Causes:
 
@@ -198,7 +237,7 @@ Mitigations:
 
 Signing/SLSA-style provenance is not currently implemented and remains a future distribution-hardening decision.
 
-### 7. Audit or recovery-state tampering
+### 8. Audit or recovery-state tampering
 
 Causes:
 
@@ -216,12 +255,17 @@ Mitigations:
 - explicit serialized `recover` / `restore`
 - reconciliation from observed filesystem state plus recorded identity rather than optimistic state transitions
 
+Goal recommendations intentionally do not create action records or modify cleanup candidates in the first slice.
+
 ## Current security posture
 
 ```text
 No permanent deletion.
 No arbitrary shell.
 No AI mutation authority.
+No AI candidate-creation authority.
+No model-authored reclaim totals as authority.
+No overlapping goal candidates.
 No adapter execution authority.
 No arbitrary file contents sent to AI.
 No non-loopback AI transport.
@@ -242,8 +286,15 @@ The current implementation is expected to preserve all of these properties:
 - [x] stale source identity is rejected
 - [x] adapter inspection is allowlisted and non-mutating
 - [x] AI cannot create or promote executable actions
-- [x] AI recommendation freshness is re-derived from authoritative facts
+- [x] candidate-level AI recommendation freshness is re-derived from authoritative facts
+- [x] goal recommendations can select only supplied eligible candidate IDs
+- [x] exact-path canonicalization cannot lower deterministic risk
+- [x] ancestor/descendant candidates are never simultaneously exposed to goal inference
+- [x] blocked or stricter descendants suppress ancestors from goal advice
+- [x] goal-plan freshness is re-read and validated after inference
+- [x] goal reclaim totals and `target_met` are calculated by `tidyfs` from non-overlapping paths
+- [x] goal recommendation does not mutate cleanup candidates, actions, or filesystem state
 - [x] invalid/malformed/provider-failure AI output fails closed
 - [x] action state records success, interruption, recovery, and failure context
 
-Any change that adds permanent deletion, non-loopback inference, tool-native execution, broader AI authority, or a new mutation primitive should reopen focused threat analysis before implementation.
+Issue #62 tracks the broader deterministic planner/executor hierarchy policy. Any change that adds permanent deletion, non-loopback inference, tool-native execution, broader AI authority, natural-language goal parsing with new trust implications, or a new mutation primitive should reopen focused threat analysis before implementation.

@@ -9,6 +9,7 @@ mod db;
 mod explain;
 mod mutation_lock;
 mod plan;
+mod recommend;
 mod recover;
 mod restore;
 mod rules;
@@ -177,6 +178,49 @@ enum Command {
         /// Maximum unique deterministic paths to analyze with AI (1..=100).
         #[arg(long, default_value_t = 10)]
         ai_limit: usize,
+    },
+
+    /// Ask a local AI gateway to recommend a read-only subset of an existing cleanup plan.
+    Recommend {
+        /// Explicit numeric loopback gateway endpoint, for example http://127.0.0.1:8000.
+        #[arg(long)]
+        endpoint: String,
+
+        /// Desired reclaim target in bytes.
+        #[arg(long)]
+        target_bytes: u64,
+
+        /// Scan id whose persisted cleanup plan should be used. Defaults to latest completed scan.
+        #[arg(long)]
+        scan_id: Option<i64>,
+
+        /// Restrict eligible persisted candidates to a subtree.
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// Maximum allowed risk for candidates supplied to recommendation.
+        #[arg(long, value_enum, default_value_t = CliRisk::Low)]
+        risk: CliRisk,
+
+        /// Path disclosure mode for facts sent to recommendation inference.
+        #[arg(long, value_enum, default_value_t = CliAiPathMode::Redacted)]
+        path_mode: CliAiPathMode,
+
+        /// Maximum unique eligible paths supplied to the gateway (1..=100).
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+
+        /// Gateway connection timeout in milliseconds.
+        #[arg(long, default_value_t = 3000)]
+        connect_timeout_ms: u64,
+
+        /// Gateway read/write timeout in milliseconds.
+        #[arg(long, default_value_t = 15000)]
+        timeout_ms: u64,
+
+        /// Maximum accepted gateway response body size in bytes.
+        #[arg(long, default_value_t = 65536)]
+        max_response_bytes: usize,
     },
 
     /// Preview allowed cleanup candidates without touching the filesystem.
@@ -398,6 +442,34 @@ fn main() -> Result<()> {
                 ai_limit,
             };
             plan::run_plan(&mut database, query)?;
+        }
+        Command::Recommend {
+            endpoint,
+            target_bytes,
+            scan_id,
+            root,
+            risk,
+            path_mode,
+            limit,
+            connect_timeout_ms,
+            timeout_ms,
+            max_response_bytes,
+        } => {
+            recommend::run_recommend(
+                &database,
+                recommend::RecommendQuery {
+                    endpoint,
+                    scan_id,
+                    target_bytes,
+                    root,
+                    max_risk: risk.into(),
+                    path_mode: path_mode.into(),
+                    limit,
+                    connect_timeout_ms,
+                    timeout_ms,
+                    max_response_bytes,
+                },
+            )?;
         }
         Command::Clean {
             scan_id,
