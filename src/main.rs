@@ -24,6 +24,7 @@ use tidyfs::ai_contract::AiPathMode;
 
 #[derive(Debug, Parser)]
 #[command(name = "tidyfs")]
+#[command(version)]
 #[command(about = "Conservative disk usage scanner and cleanup planner")]
 struct Cli {
     /// SQLite database path. Defaults to ~/.local/share/tidyfs/tidyfs.db
