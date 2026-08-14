@@ -26,10 +26,11 @@ The package version, description, repository URL, and main-program name are deri
 
 ```bash
 nix run .# -- --help
+nix run .# -- --version
 nix run .# -- scan /path/to/disposable-or-intended-root
 ```
 
-`apps.${system}.default` runs the packaged `tidyfs` binary.
+`apps.${system}.default` runs the packaged `tidyfs` binary. The CLI version is also derived from the Cargo package version, so the standalone app and package metadata share the same version truth.
 
 Nix packaging does not perform cleanup or other filesystem maintenance automatically. A normal `nix build`, `nix flake check`, or development-shell entry only builds/tests the project. Real tidyfs mutation still requires the CLI's existing explicit safety and interactive gates.
 
