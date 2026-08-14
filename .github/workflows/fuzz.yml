@@ -18,10 +18,17 @@ env:
   FUZZ_RUST_TOOLCHAIN: nightly-2026-08-12
 
 jobs:
-  ai-proposal:
-    name: AI proposal fuzz smoke
+  fuzz:
+    name: ${{ matrix.target }} campaign
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - ai_proposal_json
+          - ai_transport_response_json
+          - ai_goal_response_json
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,17 +41,24 @@ jobs:
       - name: Install pinned cargo-fuzz
         run: cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
 
-      - name: Build AI proposal fuzz target
-        run: cargo fuzz build ai_proposal_json
+      - name: Build fuzz target
+        run: cargo fuzz build "${{ matrix.target }}"
 
-      - name: Fuzz AI proposal parsing and validation
-        run: cargo fuzz run ai_proposal_json -- -max_total_time=60
+      - name: Run bounded fuzz campaign
+        shell: bash
+        run: |
+          mkdir -p "fuzz/artifacts/${{ matrix.target }}"
+          cargo fuzz run "${{ matrix.target }}" -- \
+            -max_total_time=60 \
+            -timeout=5 \
+            -rss_limit_mb=2048 \
+            -artifact_prefix="fuzz/artifacts/${{ matrix.target }}/"
 
       - name: Preserve fuzz failure artifacts
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: ai-proposal-fuzz-artifacts-${{ github.run_id }}
-          path: fuzz/artifacts/
+          name: fuzz-artifacts-${{ matrix.target }}-${{ github.run_id }}
+          path: fuzz/artifacts/${{ matrix.target }}/
           if-no-files-found: ignore
           retention-days: 14

@@ -58,7 +58,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   fuzz-harness:
-    name: AI fuzz harness
+    name: Fuzz harnesses
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -73,8 +73,12 @@ jobs:
       - name: Install pinned cargo-fuzz
         run: cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
 
-      - name: Build AI proposal fuzz target
-        run: cargo fuzz build ai_proposal_json
+      - name: Build all maintained fuzz targets
+        shell: bash
+        run: |
+          for target in ai_proposal_json ai_transport_response_json ai_goal_response_json; do
+            cargo fuzz build "$target"
+          done
 
   nix-flake:
     name: Nix flake

@@ -1,0 +1,1 @@
+{"schema_version":1,"classification":"regenerable_build_cache","confidence":0.9,"rationale":["matches generated cache layout"],"caveats":[],"risk":"medium","recommended_action":"review","provenance":{"provider":"fuzz-seed","model":"fixture","request_id":"fuzz-request"}}
