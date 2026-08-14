@@ -18,3 +18,17 @@ path = "fuzz_targets/ai_proposal_json.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "ai_transport_response_json"
+path = "fuzz_targets/ai_transport_response_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ai_goal_response_json"
+path = "fuzz_targets/ai_goal_response_json.rs"
+test = false
+doc = false
+bench = false
