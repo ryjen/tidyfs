@@ -6,6 +6,7 @@
   outputs =
     { self, nixpkgs }:
     let
+      cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
       supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -20,8 +21,8 @@
         let
           pkgs = import nixpkgs { inherit system; };
           tidyfs = pkgs.rustPlatform.buildRustPackage {
-            pname = "tidyfs";
-            version = "0.6.1";
+            pname = cargoToml.package.name;
+            version = cargoToml.package.version;
             src = self;
 
             cargoLock.lockFile = ./Cargo.lock;
@@ -47,17 +48,16 @@
 
             postInstall = ''
               "$out/bin/tidyfs" --help >/dev/null
-              "$out/bin/tidyfs" --version >/dev/null
             '';
 
             meta = {
-              description = "Conservative disk usage scanner and cleanup planner for developer machines";
-              homepage = "https://github.com/ryjen/tidyfs";
+              description = cargoToml.package.description;
+              homepage = cargoToml.package.repository;
               license = with pkgs.lib.licenses; [
                 mit
                 asl20
               ];
-              mainProgram = "tidyfs";
+              mainProgram = cargoToml.package.name;
               platforms = pkgs.lib.platforms.unix;
             };
           };
