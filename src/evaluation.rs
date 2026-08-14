@@ -201,7 +201,10 @@ impl GoalEvaluationFixture {
 }
 
 impl EvaluationBaseline {
-    pub fn validate_for(&self, suite: &GoalEvaluationSuite) -> Result<(), EvaluationValidationError> {
+    pub fn validate_for(
+        &self,
+        suite: &GoalEvaluationSuite,
+    ) -> Result<(), EvaluationValidationError> {
         if self.baseline_version != EVALUATION_BASELINE_VERSION {
             return Err(EvaluationValidationError::UnsupportedBaselineVersion(
                 self.baseline_version,
@@ -256,7 +259,11 @@ pub fn score_goal_recommendation(
     }
     let target_met = selected_bytes >= fixture.target_bytes;
 
-    let selected_ids: BTreeSet<_> = recommendation.selected_candidate_ids.iter().copied().collect();
+    let selected_ids: BTreeSet<_> = recommendation
+        .selected_candidate_ids
+        .iter()
+        .copied()
+        .collect();
     let preferred_hit = fixture.expectations.preferred_candidate_ids_any.is_empty()
         || fixture
             .expectations
@@ -311,7 +318,11 @@ pub fn score_goal_recommendation(
     };
 
     let conservatism = if fixture.expectations.expected_target_met {
-        if target_met { 100.0 } else { 0.0 }
+        if target_met {
+            100.0
+        } else {
+            0.0
+        }
     } else {
         100.0
     };
