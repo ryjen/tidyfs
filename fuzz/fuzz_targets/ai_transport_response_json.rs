@@ -1,13 +1,14 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use tidyfs::ai::{AiCleanupProposal, AiRecommendedAction};
 use tidyfs::ai_contract::{
-    validate_transport_response, AiDeterministicFacts, AiObservation, AiPathMode,
-    AiTransportRequest, AiTransportResponse,
+    validate_transport_response, AiDeterministicFacts, AiObservation, AiObservationBinding,
+    AiPathMode, AiTransportRequest, AiTransportResponse, AI_TRANSPORT_CONTRACT_VERSION,
 };
 
 fn request() -> AiTransportRequest {
-    AiTransportRequest::new(
+    let mut request = AiTransportRequest::new(
         "fuzz-request".to_owned(),
         AiObservation {
             scan_id: 42,
@@ -25,16 +26,13 @@ fn request() -> AiTransportRequest {
             },
             adapter: None,
         },
-    )
+    );
+    request.constraints.allowed_actions = vec![AiRecommendedAction::Ignore, AiRecommendedAction::Review];
+    request
 }
 
-fuzz_target!(|data: &[u8]| {
-    let Ok(response) = serde_json::from_slice::<AiTransportResponse>(data) else {
-        return;
-    };
-
-    let request = request();
-    if let Ok(proposal) = validate_transport_response(&request, response) {
+fn assert_accepted(request: &AiTransportRequest, response: AiTransportResponse) {
+    if let Ok(proposal) = validate_transport_response(request, response) {
         proposal
             .validate()
             .expect("accepted transport proposal must remain valid");
@@ -47,7 +45,28 @@ fuzz_target!(|data: &[u8]| {
         );
 
         let encoded = serde_json::to_vec(&proposal).expect("accepted proposal must serialize");
-        let decoded = serde_json::from_slice(&encoded).expect("serialized proposal must parse");
+        let decoded: AiCleanupProposal =
+            serde_json::from_slice(&encoded).expect("serialized proposal must parse");
         assert_eq!(decoded, proposal);
+    }
+}
+
+fuzz_target!(|data: &[u8]| {
+    let request = request();
+
+    if let Ok(response) = serde_json::from_slice::<AiTransportResponse>(data) {
+        assert_accepted(&request, response);
+    }
+
+    if let Ok(proposal) = serde_json::from_slice::<AiCleanupProposal>(data) {
+        let response = AiTransportResponse {
+            contract_version: AI_TRANSPORT_CONTRACT_VERSION,
+            request_id: request.request_id.clone(),
+            proposal,
+            observation: AiObservationBinding {
+                digest: request.candidate.observation.digest.clone(),
+            },
+        };
+        assert_accepted(&request, response);
     }
 });
