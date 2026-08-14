@@ -329,7 +329,15 @@ mod tests {
     #[test]
     fn descendants_suppress_all_ancestors_even_when_descendant_is_blocked() {
         let inputs = [
-            input("/cache", Risk::Low, false, None, true, "quarantine", "parent"),
+            input(
+                "/cache",
+                Risk::Low,
+                false,
+                None,
+                true,
+                "quarantine",
+                "parent",
+            ),
             input(
                 "/cache/sub",
                 Risk::Low,
@@ -370,25 +378,17 @@ mod tests {
     #[test]
     fn leaf_most_non_overlapping_paths_remain_available() {
         let inputs = [
-            input("/cache", Risk::Low, false, None, true, "quarantine", "parent"),
             input(
-                "/cache/a",
+                "/cache",
                 Risk::Low,
                 false,
                 None,
                 true,
                 "quarantine",
-                "a",
+                "parent",
             ),
-            input(
-                "/cache/b",
-                Risk::Low,
-                false,
-                None,
-                true,
-                "quarantine",
-                "b",
-            ),
+            input("/cache/a", Risk::Low, false, None, true, "quarantine", "a"),
+            input("/cache/b", Risk::Low, false, None, true, "quarantine", "b"),
         ];
 
         let decisions = canonicalize_hierarchy(&inputs);
