@@ -93,8 +93,16 @@ jobs:
       - name: Verify standalone named package build
         run: nix build .#tidyfs --no-link --print-build-logs
 
-      - name: Smoke-test default app
-        run: nix run .# -- --help >/dev/null
+      - name: Smoke-test default app help and version
+        shell: bash
+        run: |
+          nix run .# -- --help >/dev/null
+          nix run .# -- --version | grep -Fx "tidyfs $(python3 - <<'PY'
+          import pathlib, tomllib
+          data = tomllib.loads(pathlib.Path('Cargo.toml').read_text())
+          print(data['package']['version'])
+          PY
+          )"
 
       - name: Verify Nix package version follows Cargo.toml
         shell: bash
