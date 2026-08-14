@@ -75,3 +75,35 @@ jobs:
 
       - name: Build AI proposal fuzz target
         run: cargo fuzz build ai_proposal_json
+
+  nix-flake:
+    name: Nix flake
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Verify committed flake and deterministic check
+        run: nix flake check --no-write-lock-file --print-build-logs
+
+      - name: Verify standalone named package build
+        run: nix build .#tidyfs --no-link --print-build-logs
+
+      - name: Smoke-test default app
+        run: nix run .# -- --help >/dev/null
+
+      - name: Verify Nix package version follows Cargo.toml
+        shell: bash
+        run: |
+          cargo_version="$(python3 - <<'PY'
+          import pathlib, tomllib
+          data = tomllib.loads(pathlib.Path('Cargo.toml').read_text())
+          print(data['package']['version'])
+          PY
+          )"
+          nix_version="$(nix eval --raw .#packages.x86_64-linux.tidyfs.version)"
+          test "$nix_version" = "$cargo_version"
