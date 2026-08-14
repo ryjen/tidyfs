@@ -92,7 +92,7 @@
     },
     {
       "id": "infeasible-target",
-      "description": "The requested target exceeds all supplied eligible bytes; the model should remain advisory and explain that the target cannot be met from this set.",
+      "description": "The requested target exceeds all supplied eligible bytes; selecting none or a partial subset can be reasonable if the explanation makes the shortfall clear.",
       "scan_id": 1003,
       "target_bytes": 21474836480,
       "max_risk": "low",
@@ -119,7 +119,7 @@
       ],
       "expectations": {
         "expected_target_met": false,
-        "preferred_candidate_ids_any": [21, 22],
+        "preferred_candidate_ids_any": [],
         "avoid_candidate_ids": [],
         "max_selected_candidates": 2,
         "rationale_terms_any": ["target", "insufficient"]
