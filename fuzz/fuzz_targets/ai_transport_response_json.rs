@@ -27,7 +27,8 @@ fn request() -> AiTransportRequest {
             adapter: None,
         },
     );
-    request.constraints.allowed_actions = vec![AiRecommendedAction::Ignore, AiRecommendedAction::Review];
+    request.constraints.allowed_actions =
+        vec![AiRecommendedAction::Ignore, AiRecommendedAction::Review];
     request
 }
 
