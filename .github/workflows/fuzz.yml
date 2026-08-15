@@ -20,7 +20,7 @@ env:
 jobs:
   fuzz:
     name: ${{ matrix.target }} campaign
-    runs-on: ubuntu-latest
+    runs-on: runner-tidyfs
     timeout-minutes: 10
     strategy:
       fail-fast: false
