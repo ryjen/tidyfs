@@ -5,16 +5,14 @@ use tidyfs::evaluation::{EvaluationBaseline, GoalEvaluationSuite};
 #[test]
 fn committed_live_evaluation_corpus_is_versioned_and_valid() {
     let suite: GoalEvaluationSuite = serde_json::from_slice(
-        &fs::read("eval/fixtures/goal-recommendations-v1.json")
-            .expect("read evaluation fixtures"),
+        &fs::read("eval/fixtures/goal-recommendations-v1.json").expect("read evaluation fixtures"),
     )
     .expect("parse evaluation fixtures");
     suite.validate().expect("valid evaluation fixtures");
     assert!(!suite.fixtures.is_empty());
 
     let baseline: EvaluationBaseline = serde_json::from_slice(
-        &fs::read("eval/baselines/goal-recommendations-v1.json")
-            .expect("read evaluation baseline"),
+        &fs::read("eval/baselines/goal-recommendations-v1.json").expect("read evaluation baseline"),
     )
     .expect("parse evaluation baseline");
     baseline
