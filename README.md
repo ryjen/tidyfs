@@ -2,96 +2,126 @@
 
 `tidyfs` is an AI-enabled, conservative filesystem cleanup and disk-usage intelligence CLI.
 
-Milestone 6.1 adds parallel subtree scanning plus tool-native adapter inspection and planning. Local AI analysis and conservative plan enrichment are available through an explicit loopback gateway:
+The project combines deterministic filesystem facts, policy-gated cleanup planning, optional AI-assisted analysis, and reversible execution. AI may classify, explain, enrich, or recommend among candidates that `tidyfs` already considers; deterministic code remains authoritative for eligibility, risk, reclaim-byte accounting, approval, mutation, and recovery.
 
 ```bash
-tidyfs scan ~
 tidyfs scan ~ --jobs 8
-tidyfs analyze --endpoint http://127.0.0.1:8000 --limit 10
+tidyfs top --depth 2 --limit 20
 tidyfs plan --safe
+tidyfs clean --dry-run
+tidyfs clean --safe --interactive
+
+# Optional local AI analysis / planning.
+tidyfs analyze --endpoint http://127.0.0.1:8000 --limit 10
 tidyfs plan --safe --ai-endpoint http://127.0.0.1:8000 --ai-path-mode redacted
-tidyfs adapters
-tidyfs plan --risk medium --include-adapters
-tidyfs clean --dry-run --risk medium
+
+# Read-only goal-oriented advice over an existing deterministic plan.
+tidyfs recommend \
+  --endpoint http://127.0.0.1:8000 \
+  --target-bytes 21474836480 \
+  --risk low
 ```
 
-The project goal is to combine AI-assisted cleanup intelligence with a deterministic, policy-gated, reversible execution core. AI may enrich classifications, explanations, and cleanup recommendations; it does not bypass safety policy or directly perform destructive filesystem mutation.
-
-## Current scope
+## Current capabilities
 
 Implemented:
 
 - Rust CLI
-- recursive filesystem scan
-- SQLite index
-- directory aggregation
+- recursive and parallel subtree scanning
+- SQLite index and directory aggregation
 - deterministic classification
-- `explain` command with revalidated stored AI evidence
-- bounded, read-only `analyze` command through a numeric loopback gateway
+- YAML cleanup rules and protected-category policy
+- canonical non-overlapping cleanup hierarchy for totals, dry-run, and execution
+- persisted cleanup plans and blocked-candidate reporting
+- `clean --dry-run`
+- explicit `--safe --interactive` reversible quarantine execution
+- durable cleanup and restore action states
+- interrupted-action reconciliation with `recover`
+- action logging and `actions` listing
+- `restore`
+- read-only tool-native adapters for systemd journal, Docker, Podman, Nix, pnpm, pip, uv, and Go
+- bounded read-only AI analysis through a numeric-loopback gateway
 - canonical AI observation binding and strict provider-neutral JSON transport
 - explicit AI path privacy modes (`full`, `basename`, `redacted`)
 - conservative AI enrichment of already-eligible deterministic plan candidates
-- authoritative observation reconstruction and stale-recommendation rejection
-- persisted advisory AI rationale/confidence/provenance/observation evidence
-- YAML cleanup rules
-- policy validation
-- cleanup candidate persistence
-- `plan` command
-- blocked-candidate reporting
-- `clean --dry-run`
-- reversible quarantine execution
-- durable cleanup and restore action states
-- interrupted action reconciliation with `recover`
-- action logging
-- `actions` listing
-- `restore`
-- read-only tool-native adapters
+- authoritative post-inference observation revalidation and stale-recommendation rejection
+- persisted advisory AI rationale, confidence, provenance, and observation evidence
+- `explain` with freshness revalidation of stored AI evidence
+- read-only goal-oriented `recommend` over canonical existing plan candidates
+- deterministic goal-plan freshness binding and reclaim-byte calculation
+- optional versioned live-model quality evaluation harness
+- standalone Nix flake package/app/check/dev-shell contract
+- tag-driven Linux release packaging with deterministic archive contents and SHA-256 verification
+- coverage-guided fuzzing of bounded AI trust boundaries
 - no permanent deletion
 
-Planned / evolving:
+Planned or intentionally deferred:
 
-- semantic explanation improvements for filesystem usage and cleanup plans
-- AI-generated candidate rules or policy suggestions
+- semantic explanation improvements
+- AI-generated candidate rules or policy suggestions, if there is a demonstrated workflow need
 - hardened non-loopback gateway transport, if remote inference becomes necessary
+- executable tool-native adapter cleanup, which requires a separate command-authority and recovery design
+- permanent deletion
 
-Adapters currently inspect/report only. They do not execute cleanup commands.
+## Authority and trust model
 
-## AI trust boundary
-
-AI is an advisory and planning layer, not the filesystem mutation authority.
+The high-level execution path is:
 
 ```text
 filesystem facts / adapter facts
 -> deterministic classifications
--> deterministic rule + protected-category policy
+-> deterministic rules + protected-category policy
+-> exact-path and ancestor/descendant hierarchy canonicalization
 -> optional bounded AI enrichment of already-eligible quarantine candidates
--> authoritative observation revalidation
+-> authoritative post-inference revalidation
 -> conservative conflict resolution
 -> selected user risk threshold
+-> persisted deterministic plan
 -> dry-run preview
 -> explicit interactive approval
--> reversible quarantine execution
+-> source identity + filesystem checks
+-> reversible quarantine
 -> durable action state
 -> recover or restore
 ```
 
+Goal-oriented recommendation is a read-only branch over the persisted plan:
+
+```text
+persisted deterministic plan
+-> canonical non-overlapping eligible candidate set
+-> bounded target / risk / root constraints
+-> optional loopback AI selection of supplied candidate IDs
+-> request + plan-digest validation
+-> post-inference plan re-read
+-> deterministic selected-byte calculation
+-> read-only recommendation output
+```
+
 The intended invariant is:
 
-> AI may broaden understanding and make a plan more conservative; deterministic policy controls what can actually happen.
+> AI may broaden understanding or make a plan more conservative; deterministic policy controls what can actually happen.
 
-AI-generated output is untrusted input. It cannot create a cleanup candidate, lower deterministic risk, remove a policy block, convert `report_only` or `tool_native` work into raw filesystem mutation, authorize permanent deletion, suppress blocked-candidate reporting, or directly invoke arbitrary shell commands.
+AI output is untrusted input. It cannot:
 
-The planner evaluates AI only for unique paths that deterministic rules have already made eligible for reversible quarantine. Static policy is applied first. The AI result may:
+- create an executable cleanup candidate
+- lower deterministic risk
+- remove a policy block
+- make a blocked ancestor bypass a protected or stricter descendant
+- convert `report_only` or `tool_native` work into raw filesystem mutation
+- broaden the selected scan root
+- authoritatively determine reclaim-byte totals
+- persist a goal recommendation as cleanup authority
+- authorize permanent deletion
+- bypass `clean --safe --interactive`
+- invoke arbitrary shell commands
+- directly call filesystem mutation primitives
 
-- recommend `ignore` or `review`, which blocks the candidate
-- raise effective risk, which is checked again against the selected user threshold
-- recommend `quarantine`; this only preserves the existing deterministic quarantine action when confidence and policy still allow it
-
-Low-confidence recommendations are review-only. Provider failure or stale observation binding fails the AI-enriched plan before candidate/evidence persistence rather than synthesizing a fallback recommendation.
+See [AI architecture](docs/ai-architecture.md), [cleanup hierarchy](docs/cleanup-hierarchy.md), and the [threat model](docs/threat-model.md) for the detailed boundaries.
 
 ## Local AI analysis
 
-`tidyfs analyze` reads already-indexed classification facts and sends a bounded set of candidates to an explicitly configured local gateway implementing `POST /v1/analyze`.
+`tidyfs analyze` sends bounded metadata from an existing completed scan to an explicitly selected local gateway implementing `POST /v1/analyze`.
 
 ```bash
 # Full paths are acceptable for an explicitly selected loopback model.
@@ -99,32 +129,23 @@ tidyfs analyze \
   --endpoint http://127.0.0.1:8000 \
   --limit 10
 
-# Reduce path disclosure while preserving recognized ecosystem structure.
+# Reduce path disclosure while preserving useful ecosystem structure.
 tidyfs analyze \
   --endpoint http://127.0.0.1:8000 \
   --root ~/src \
   --path-mode redacted \
   --limit 5
-
-# Analyze a specific completed scan with a bounded response size/timeout.
-tidyfs analyze \
-  --endpoint http://[::1]:8000 \
-  --scan-id 42 \
-  --timeout-ms 15000 \
-  --max-response-bytes 65536
 ```
 
-The runtime deliberately accepts **numeric loopback addresses only** (`127.0.0.0/8` or `::1`). It performs no DNS resolution, carries no credentials, follows no redirects, and rejects transfer-encoded responses. Remote HTTP/HTTPS gateways are not silently enabled.
+The runtime accepts **numeric loopback addresses only** (`127.0.0.0/8` or `::1`). It performs no DNS resolution, carries no credentials, follows no redirects, rejects transfer-encoded responses, and bounds request/response sizes and timeouts.
 
 Path modes:
 
-- `full` — exact indexed path; default for the explicit `analyze` command
+- `full` — exact indexed path; default for explicit `analyze`
 - `basename` — basename only
-- `redacted` — removes user/project prefixes while preserving selected structures such as `.gradle/caches`, `.cache`, `DerivedData`, `node_modules`, and `/nix/store`; default for AI-enriched planning
+- `redacted` — removes user/project prefixes while preserving selected structures such as `.gradle/caches`, `.cache`, `DerivedData`, `node_modules`, and `/nix/store`; default for AI-assisted planning and goal recommendation
 
-The request contains metadata only: path according to the selected privacy mode, size/scan-relative age, bounded deterministic labels, policy context, stable candidate identity, and an observation digest over the exact post-privacy facts sent to inference. File contents are not sent.
-
-Every accepted response must match the request ID and observation digest, pass strict JSON/schema validation, use the restricted action vocabulary (`ignore`, `review`, `quarantine`), and carry matching provenance. Model-controlled text and list sizes are bounded, and terminal control/bidirectional-control characters are escaped before display.
+The inference contract contains metadata only: transformed path, size/scan-relative age, bounded deterministic labels, policy context, stable candidate identity, and correlation/freshness bindings. Arbitrary file contents are not sent.
 
 ## AI-enriched planning
 
@@ -138,96 +159,45 @@ tidyfs plan \
   --ai-limit 10
 ```
 
-Planning never trusts stored evidence as a freshness authority. For every live recommendation, tidyfs:
+For every live candidate-level recommendation, `tidyfs`:
 
 1. builds the canonical observation from authoritative scan/index facts;
-2. sends that observation to the local gateway;
-3. validates response schema, request ID, provenance, and digest correlation;
-4. re-queries the authoritative scan/index facts after inference;
-5. re-derives the canonical observation digest and rejects any mismatch;
-6. applies deterministic policy first, then one-way conservative AI conflict resolution;
-7. persists cleanup candidates and advisory AI evidence together only after every selected AI call succeeds.
+2. sends the bounded observation to the local gateway;
+3. validates schema, request ID, provenance, action vocabulary, and digest correlation;
+4. re-queries authoritative facts after inference;
+5. re-derives the canonical observation and rejects stale results;
+6. applies deterministic policy before one-way conservative AI conflict resolution;
+7. persists cleanup candidates and advisory AI evidence only after the selected analysis succeeds.
 
-Persisted AI evidence contains rationale, confidence, provenance, path privacy mode, risk context, candidate identity, and observation digest. `tidyfs explain <path>` shows the latest stored evidence and re-derives its freshness from current authoritative scan facts. A stale recommendation remains audit evidence but is clearly marked `stale` and is not planning authority.
+Stored AI evidence remains audit/explanation evidence, not a freshness authority. `tidyfs explain <path>` re-derives whether that evidence is still current.
 
-## Adapter commands
+## Goal-oriented recommendations
 
-```bash
-cargo run -- adapters
-cargo run -- plan --risk medium --include-adapters
-```
-
-Supported adapters:
-
-- systemd journal
-- Docker
-- Podman
-- Nix
-- pnpm
-- pip
-- uv
-- Go
-
-## Install / run
+`recommend` answers a bounded cleanup question over an already-persisted deterministic plan without changing that plan:
 
 ```bash
-cargo run -- scan ~
-cargo run -- scan ~ --jobs 8
-cargo run -- top --depth 2 --limit 20
-cargo run -- classify --summary
-cargo run -- explain ~/.cache --children
-cargo run -- analyze --endpoint http://127.0.0.1:8000 --limit 10
-cargo run -- plan --safe
-cargo run -- plan --safe --ai-endpoint http://127.0.0.1:8000 --ai-path-mode redacted
-cargo run -- clean --dry-run
-cargo run -- clean --safe --interactive
-cargo run -- actions
-cargo run -- recover --all
-cargo run -- restore --latest
-cargo run -- adapters
-cargo run -- plan --risk medium --include-adapters
+tidyfs plan --safe
+
+tidyfs recommend \
+  --endpoint http://127.0.0.1:8000 \
+  --target-bytes 21474836480 \
+  --risk low \
+  --path-mode redacted
 ```
 
-By default, the SQLite DB is stored at:
+Before inference, `tidyfs` exposes only canonical, pairwise non-overlapping, unblocked, reversible quarantine candidates inside the requested root/risk boundary. The gateway may select only candidate IDs supplied in the request. After inference, the persisted plan is re-read and revalidated; unknown, duplicate, stale, or otherwise invalid selections fail closed.
 
-```text
-~/.local/share/tidyfs/tidyfs.db
-```
+The model does not author reclaim totals. `tidyfs` calculates selected bytes and `target_met` from the revalidated candidate set. The result is recommendation output only; cleanup still requires a separate deterministic `clean` flow.
 
-Quarantine data is stored at:
+## Adapter inspection
 
-```text
-~/.local/share/tidyfs/quarantine/
-```
-
-## Safety posture
-
-Milestone 6 supports real filesystem mutation only through quarantine.
-
-It does not:
-
-- permanently delete files
-- purge quarantine
-- execute adapter cleanup commands
-- run arbitrary shell commands
-- allow AI output to bypass policy validation or approval
-- allow AI to create new executable candidates
-- send arbitrary file contents to the AI gateway
-- allow the AI gateway to mutate the filesystem
-
-Real quarantine execution requires both:
+Adapters inspect tool-owned cleanup domains without giving `tidyfs` external-tool mutation authority:
 
 ```bash
---safe --interactive
+tidyfs adapters
+tidyfs plan --risk medium --include-adapters
+tidyfs clean --dry-run --risk medium
 ```
-
-Cleanup and restore persist transitional action states before filesystem mutation. After an interrupted operation, reconcile the database against the two recorded paths with:
-
-```bash
-tidyfs recover --all
-```
-
-Recovery does not move, delete, or overwrite filesystem entries. See [Recoverable actions](docs/recovery.md) for the state machine, reconciliation matrix, threat model, current limitations, and operator procedure.
 
 Adapter candidates use:
 
@@ -235,58 +205,143 @@ Adapter candidates use:
 action_type = tool_native
 ```
 
-They are visible in plans and dry-runs, but are not executable yet and are never promoted to filesystem mutation by AI advice.
+They may appear in plans and dry-runs but are not executable by the quarantine executor. AI cannot promote them into raw filesystem mutation.
 
-## Planning model
+See [adapter design](docs/adapters.md).
+
+## Safety and recovery
+
+Real filesystem mutation is intentionally narrow:
+
+```bash
+tidyfs clean --safe --interactive
+```
+
+Current execution:
+
+- quarantines only reversible filesystem candidates
+- does not permanently delete
+- rejects symlink substitution
+- checks scanned source device/inode identity on supported platforms
+- requires same-filesystem quarantine rather than copy/delete fallback
+- verifies payload identity around the move
+- persists transitional action state before filesystem mutation
+- serializes cleanup/restore/recovery mutation flows
+
+After interruption, reconcile recorded action state against the observed filesystem without moving or overwriting files:
+
+```bash
+tidyfs recover --all
+```
+
+Restore quarantined data explicitly:
+
+```bash
+tidyfs restore --latest
+# or
+tidyfs restore --action <id>
+```
+
+See [recoverable actions](docs/recovery.md) for the state machine, reconciliation matrix, residual TOCTOU limitation, and operator procedure.
+
+## Install and run
+
+With Cargo:
+
+```bash
+cargo run -- scan ~ --jobs 8
+cargo run -- top --depth 2 --limit 20
+cargo run -- classify --summary
+cargo run -- explain ~/.cache --children
+cargo run -- plan --safe
+cargo run -- clean --dry-run
+cargo run -- clean --safe --interactive
+cargo run -- actions
+cargo run -- recover --all
+cargo run -- restore --latest
+```
+
+With Nix:
+
+```bash
+nix build .#tidyfs
+nix run .# -- --help
+nix flake check
+nix develop
+```
+
+The flake exports named/default packages, a default app, deterministic checks, a development shell, and formatter. It is standalone and does not depend on Dubnium host configuration. See [Nix packaging](docs/nix.md).
+
+Default local state:
 
 ```text
-scan facts
--> deterministic classifications
--> YAML cleanup rules
--> adapter inspection
--> deterministic policy validation
--> optional bounded AI enrichment of already-eligible quarantine candidates
--> post-inference observation revalidation
--> one-way conservative conflict policy
--> cleanup candidates / blocked candidates + advisory evidence
--> dry-run preview
--> interactive quarantine execution for reversible file candidates only
--> durable action state
--> recover or restore
+~/.local/share/tidyfs/tidyfs.db
+~/.local/share/tidyfs/quarantine/
 ```
 
 ## Parallel scanning
 
-The scanner uses parallel workers over immediate child subtrees and a single SQLite writer.
+The scanner parallelizes immediate child subtrees while keeping SQLite writes serialized:
 
 ```bash
 tidyfs scan ~ --jobs 8
 ```
 
-Why this shape:
+This keeps aggregation deterministic and avoids shared mutable filesystem state while removing the obvious single-threaded traversal bottleneck. See [parallel scanning](docs/parallel-scanning.md).
 
-- metadata reads are parallelized
-- SQLite writes remain serialized and simple
-- aggregation remains deterministic
-- no shared mutable filesystem state
-- no deletion behavior changes
+## AI quality evaluations
 
-This is not the final high-performance design, but it removes the obvious single-threaded traversal bottleneck while preserving the safety model.
+Correctness and safety tests do not depend on a live model. Model output is treated as untrusted structured input and deterministic validation remains the merge/release evidence for authority boundaries.
+
+An optional evaluation layer measures advisory recommendation quality and drift over a committed, redacted fixture corpus:
+
+```bash
+TIDYFS_EVAL_ENDPOINT=http://127.0.0.1:8000 mise run eval-live
+```
+
+The harness records machine-readable and human-readable scorecards with runtime/provider/model/request provenance. Semantic-quality regressions are reported without becoming cleanup authority or ordinary PR correctness gates; provider and contract failures remain distinct error classes.
+
+See [live-model evaluations](docs/evaluations.md).
 
 ## Development and quality gates
 
-Run the same core checks locally that CI uses before opening or merging a pull request:
+Canonical local checks:
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features --locked
-cargo package --locked
+mise run static-analysis
+mise run test
+mise run package
+mise run ci
+mise run fuzz-build
+mise run audit
+nix flake check
 ```
 
-CI also runs a RustSec dependency audit. The stable required check names are:
+The deterministic CI quality surface includes:
 
-- `Rust quality`
-- `Dependency audit`
+- **Rust quality** — formatting, Clippy with warnings denied, locked tests, package verification
+- **Dependency audit** — RustSec
+- **Fuzz harnesses** — compile every maintained fuzz target using pinned nightly/cargo-fuzz tooling
+- **Nix flake** — standalone package/check/app validation
 
-The dependency-audit job is intentionally read-only with respect to repository contents and receives only the additional GitHub Checks permission required to publish its audit result.
+Linux CI, fuzzing, and release jobs use the exact `runner-tidyfs` JIT runner route. Coverage-guided fuzz campaigns remain scheduled/manual rather than ordinary PR runtime work.
+
+## Distribution
+
+`Cargo.toml` is the package/version source of truth. The Linux release workflow verifies the tag/version relationship, builds with locked dependencies, produces deterministic archive contents, generates a SHA-256 checksum, and separates read-only build work from release publication authority.
+
+Signing/SLSA-style provenance, additional binary targets, and any crates.io publication policy remain separate distribution decisions.
+
+## Documentation
+
+Key design documents:
+
+- [Architecture](docs/architecture.md)
+- [AI architecture](docs/ai-architecture.md)
+- [AI usage](docs/ai-usage.md)
+- [Threat model](docs/threat-model.md)
+- [Cleanup hierarchy](docs/cleanup-hierarchy.md)
+- [Recovery](docs/recovery.md)
+- [Adapters](docs/adapters.md)
+- [Nix packaging](docs/nix.md)
+- [Live-model evaluations](docs/evaluations.md)
