@@ -1,0 +1,10 @@
+{
+  "baseline_version": 1,
+  "suite_version": 1,
+  "minimum_average_score": 70.0,
+  "fixture_minimum_scores": {
+    "compact-single-cache-target": 75.0,
+    "two-candidate-target": 65.0,
+    "infeasible-target": 60.0
+  }
+}

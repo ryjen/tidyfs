@@ -1,0 +1,129 @@
+{
+  "suite_version": 1,
+  "name": "goal-recommendation-quality-v1",
+  "fixtures": [
+    {
+      "id": "compact-single-cache-target",
+      "description": "A single large regenerable cache can satisfy the target without selecting extra candidates.",
+      "scan_id": 1001,
+      "target_bytes": 8589934592,
+      "max_risk": "low",
+      "root": "<redacted>/.cache",
+      "candidates": [
+        {
+          "candidate_id": 7,
+          "path": "<redacted>/.cache/pip",
+          "path_mode": "redacted",
+          "size_bytes": 10737418240,
+          "risk": "low",
+          "rule_id": "pip-cache",
+          "category": "cache"
+        },
+        {
+          "candidate_id": 8,
+          "path": "<redacted>/.cache/uv",
+          "path_mode": "redacted",
+          "size_bytes": 5368709120,
+          "risk": "low",
+          "rule_id": "uv-cache",
+          "category": "cache"
+        },
+        {
+          "candidate_id": 9,
+          "path": "<redacted>/.cache/gradle/caches",
+          "path_mode": "redacted",
+          "size_bytes": 4294967296,
+          "risk": "low",
+          "rule_id": "gradle-cache",
+          "category": "build_cache"
+        }
+      ],
+      "expectations": {
+        "expected_target_met": true,
+        "preferred_candidate_ids_any": [7],
+        "avoid_candidate_ids": [],
+        "max_selected_candidates": 1,
+        "rationale_terms_any": ["cache", "target"]
+      }
+    },
+    {
+      "id": "two-candidate-target",
+      "description": "The target requires a compact pair from several ordinary regenerable developer caches.",
+      "scan_id": 1002,
+      "target_bytes": 9663676416,
+      "max_risk": "low",
+      "root": "<redacted>/workspace",
+      "candidates": [
+        {
+          "candidate_id": 11,
+          "path": "<redacted>/workspace/node_modules",
+          "path_mode": "redacted",
+          "size_bytes": 6442450944,
+          "risk": "low",
+          "rule_id": "node-modules",
+          "category": "dependency_cache"
+        },
+        {
+          "candidate_id": 12,
+          "path": "<redacted>/workspace/DerivedData",
+          "path_mode": "redacted",
+          "size_bytes": 5368709120,
+          "risk": "low",
+          "rule_id": "derived-data",
+          "category": "build_cache"
+        },
+        {
+          "candidate_id": 13,
+          "path": "<redacted>/workspace/.cache/pip",
+          "path_mode": "redacted",
+          "size_bytes": 4294967296,
+          "risk": "low",
+          "rule_id": "pip-cache",
+          "category": "cache"
+        }
+      ],
+      "expectations": {
+        "expected_target_met": true,
+        "preferred_candidate_ids_any": [11, 12],
+        "avoid_candidate_ids": [],
+        "max_selected_candidates": 2,
+        "rationale_terms_any": ["reclaim", "target"]
+      }
+    },
+    {
+      "id": "infeasible-target",
+      "description": "The requested target exceeds all supplied eligible bytes; selecting none or a partial subset can be reasonable if the explanation makes the shortfall clear.",
+      "scan_id": 1003,
+      "target_bytes": 21474836480,
+      "max_risk": "low",
+      "root": "<redacted>/.cache",
+      "candidates": [
+        {
+          "candidate_id": 21,
+          "path": "<redacted>/.cache/pip",
+          "path_mode": "redacted",
+          "size_bytes": 4294967296,
+          "risk": "low",
+          "rule_id": "pip-cache",
+          "category": "cache"
+        },
+        {
+          "candidate_id": 22,
+          "path": "<redacted>/.cache/uv",
+          "path_mode": "redacted",
+          "size_bytes": 3221225472,
+          "risk": "low",
+          "rule_id": "uv-cache",
+          "category": "cache"
+        }
+      ],
+      "expectations": {
+        "expected_target_met": false,
+        "preferred_candidate_ids_any": [],
+        "avoid_candidate_ids": [],
+        "max_selected_candidates": 2,
+        "rationale_terms_any": ["target", "insufficient"]
+      }
+    }
+  ]
+}
