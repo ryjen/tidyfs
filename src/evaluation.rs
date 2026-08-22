@@ -222,6 +222,13 @@ impl EvaluationBaseline {
             ));
         }
         let fixture_ids: BTreeSet<_> = suite.fixtures.iter().map(|fixture| &fixture.id).collect();
+        for id in &fixture_ids {
+            if !self.fixture_minimum_scores.contains_key(*id) {
+                return Err(EvaluationValidationError::InvalidFixture(format!(
+                    "baseline is missing minimum score for fixture {id:?}"
+                )));
+            }
+        }
         for (id, score) in &self.fixture_minimum_scores {
             if !fixture_ids.contains(id) {
                 return Err(EvaluationValidationError::InvalidFixture(format!(
@@ -398,6 +405,23 @@ mod tests {
         }
     }
 
+    fn suite() -> GoalEvaluationSuite {
+        GoalEvaluationSuite {
+            suite_version: EVALUATION_SUITE_VERSION,
+            name: "goal-quality".to_owned(),
+            fixtures: vec![fixture()],
+        }
+    }
+
+    fn baseline() -> EvaluationBaseline {
+        EvaluationBaseline {
+            baseline_version: EVALUATION_BASELINE_VERSION,
+            suite_version: EVALUATION_SUITE_VERSION,
+            minimum_average_score: 75.0,
+            fixture_minimum_scores: BTreeMap::from([("compact-cache-target".to_owned(), 70.0)]),
+        }
+    }
+
     fn recommendation(ids: Vec<i64>, rationale: &str) -> AiGoalRecommendation {
         AiGoalRecommendation {
             schema_version: AI_GOAL_SCHEMA_VERSION,
@@ -413,21 +437,46 @@ mod tests {
     }
 
     #[test]
-    fn validates_fixture_and_baseline_contracts() {
-        let suite = GoalEvaluationSuite {
-            suite_version: EVALUATION_SUITE_VERSION,
-            name: "goal-quality".to_owned(),
-            fixtures: vec![fixture()],
-        };
+    fn validates_fixture_and_complete_baseline_contracts() {
+        let suite = suite();
         suite.validate().expect("valid fixture suite");
+        baseline().validate_for(&suite).expect("valid baseline");
+    }
 
-        let baseline = EvaluationBaseline {
-            baseline_version: EVALUATION_BASELINE_VERSION,
-            suite_version: EVALUATION_SUITE_VERSION,
-            minimum_average_score: 75.0,
-            fixture_minimum_scores: BTreeMap::from([("compact-cache-target".to_owned(), 70.0)]),
-        };
-        baseline.validate_for(&suite).expect("valid baseline");
+    #[test]
+    fn baseline_rejects_missing_fixture_threshold() {
+        let suite = suite();
+        let mut baseline = baseline();
+        baseline.fixture_minimum_scores.clear();
+
+        let error = baseline
+            .validate_for(&suite)
+            .expect_err("missing fixture threshold must fail validation");
+        assert_eq!(
+            error,
+            EvaluationValidationError::InvalidFixture(
+                "baseline is missing minimum score for fixture \"compact-cache-target\"".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn baseline_rejects_extra_fixture_threshold() {
+        let suite = suite();
+        let mut baseline = baseline();
+        baseline
+            .fixture_minimum_scores
+            .insert("unknown-fixture".to_owned(), 50.0);
+
+        let error = baseline
+            .validate_for(&suite)
+            .expect_err("unknown fixture threshold must fail validation");
+        assert_eq!(
+            error,
+            EvaluationValidationError::InvalidFixture(
+                "baseline references unknown fixture \"unknown-fixture\"".to_owned()
+            )
+        );
     }
 
     #[test]
