@@ -91,6 +91,7 @@
         {
           default = pkgs.mkShell {
             packages = [
+              pkgs.bash
               pkgs.cargo
               pkgs.cargo-audit
               pkgs.clippy
