@@ -34,6 +34,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.95.0"
   RELEASE_TARGET: x86_64-unknown-linux-musl
   RELEASE_ARTIFACT_NAME: tidyfs-linux-release-assets
 
@@ -48,9 +49,10 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
           fetch-depth: 0
 
-      - name: Install Rust toolchain
+      - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ env.RELEASE_TARGET }}
 
       - name: Verify pinned native toolchain
