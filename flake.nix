@@ -94,10 +94,18 @@
               pkgs.cargo
               pkgs.cargo-audit
               pkgs.clippy
+              pkgs.coreutils
+              pkgs.diffutils
+              pkgs.git
+              pkgs.gnused
+              pkgs.gnutar
+              pkgs.gzip
               pkgs.mise
+              pkgs.python3
               pkgs.rust-analyzer
               pkgs.rustc
               pkgs.rustfmt
+              pkgs.stdenv.cc
             ];
           };
         }
