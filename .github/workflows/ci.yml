@@ -109,22 +109,13 @@ jobs:
       - name: Smoke-test default app help and version
         shell: bash
         run: |
+          cargo_version="$(nix develop --command python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
           nix run .# -- --help >/dev/null
-          nix run .# -- --version | grep -Fx "tidyfs $(python3 - <<'PY'
-          import pathlib, tomllib
-          data = tomllib.loads(pathlib.Path('Cargo.toml').read_text())
-          print(data['package']['version'])
-          PY
-          )"
+          nix run .# -- --version | grep -Fx "tidyfs ${cargo_version}"
 
       - name: Verify Nix package version follows Cargo.toml
         shell: bash
         run: |
-          cargo_version="$(python3 - <<'PY'
-          import pathlib, tomllib
-          data = tomllib.loads(pathlib.Path('Cargo.toml').read_text())
-          print(data['package']['version'])
-          PY
-          )"
+          cargo_version="$(nix develop --command python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
           nix_version="$(nix eval --raw .#packages.x86_64-linux.tidyfs.version)"
           test "$nix_version" = "$cargo_version"
