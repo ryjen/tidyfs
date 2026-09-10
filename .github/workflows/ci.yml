@@ -33,14 +33,17 @@ jobs:
       - name: Cache Cargo data
         uses: Swatinem/rust-cache@v2
 
+      - name: Verify pinned native toolchain
+        run: nix develop --command bash -c 'command -v cc >/dev/null && cc --version'
+
       - name: Run static analysis
-        run: bash scripts/static-analysis.sh
+        run: nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/static-analysis.sh'
 
       - name: Run deterministic tests
-        run: cargo test --all-targets --all-features --locked
+        run: nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; cargo test --all-targets --all-features --locked'
 
       - name: Verify Cargo package
-        run: cargo package --locked
+        run: nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; cargo package --locked'
 
   audit:
     name: Dependency audit
@@ -70,15 +73,21 @@ jobs:
         with:
           toolchain: ${{ env.FUZZ_RUST_TOOLCHAIN }}
 
+      - name: Verify pinned native toolchain
+        run: nix develop --command bash -c 'command -v cc >/dev/null && cc --version'
+
       - name: Install pinned cargo-fuzz
-        run: cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
+        run: nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked'
 
       - name: Build all maintained fuzz targets
         shell: bash
         run: |
-          for target in ai_proposal_json ai_transport_response_json ai_goal_response_json; do
-            cargo fuzz build "$target"
-          done
+          nix develop --command bash -c '
+            export PATH="$HOME/.cargo/bin:$PATH"
+            for target in ai_proposal_json ai_transport_response_json ai_goal_response_json; do
+              cargo fuzz build "$target"
+            done
+          '
 
   nix-flake:
     name: Nix flake
