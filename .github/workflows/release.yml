@@ -5,6 +5,8 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/package-release.sh
+      - flake.nix
+      - flake.lock
       - Cargo.toml
       - Cargo.lock
       - src/**
@@ -32,7 +34,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RELEASE_TARGET: x86_64-unknown-linux-gnu
+  RELEASE_TARGET: x86_64-unknown-linux-musl
   RELEASE_ARTIFACT_NAME: tidyfs-linux-release-assets
 
 jobs:
@@ -48,15 +50,17 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.RELEASE_TARGET }}
 
       - name: Verify pinned native toolchain
-        run: nix develop --command bash -c 'command -v cc >/dev/null && cc --version'
+        run: nix develop .#release --command bash -c 'command -v cc >/dev/null && cc --version'
 
       - name: Verify mismatched tag fails closed
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
-          if RELEASE_TAG="v999.999.999" nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/package-release.sh'; then
+          if RELEASE_TAG="v999.999.999" nix develop .#release --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/package-release.sh'; then
             echo "mismatched release tag unexpectedly passed validation" >&2
             exit 1
           fi
@@ -86,13 +90,25 @@ jobs:
           DISPATCH_TAG: ${{ github.event.inputs.tag }}
         run: |
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            RELEASE_TAG="$DISPATCH_TAG" nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/package-release.sh'
+            RELEASE_TAG="$DISPATCH_TAG" nix develop .#release --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/package-release.sh'
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            RELEASE_TAG="$GITHUB_REF_NAME" nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/package-release.sh'
+            RELEASE_TAG="$GITHUB_REF_NAME" nix develop .#release --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/package-release.sh'
           else
-            version="$(nix develop --command python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
-            RELEASE_TAG="v${version}" nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/package-release.sh'
+            version="$(nix develop .#release --command python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+            RELEASE_TAG="v${version}" nix develop .#release --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/package-release.sh'
           fi
+
+      - name: Verify release binary outside Nix dev shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          binaries=(dist/tidyfs-*-"${RELEASE_TARGET}"/tidyfs)
+          if (( ${#binaries[@]} != 1 )); then
+            echo "expected exactly one release binary, found ${#binaries[@]}" >&2
+            exit 1
+          fi
+          env -i PATH=/usr/bin:/bin "${binaries[0]}" --version
 
       - name: Upload verified release assets
         uses: actions/upload-artifact@v7
