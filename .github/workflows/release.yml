@@ -55,8 +55,15 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ env.RELEASE_TARGET }}
 
-      - name: Verify pinned native toolchain
-        run: nix develop .#release --command bash -c 'command -v cc >/dev/null && cc --version'
+      - name: Verify pinned host and target toolchains
+        run: |
+          nix develop .#release --command bash -c '
+            set -euo pipefail
+            command -v cc >/dev/null
+            cc --version
+            test -x "$CC_x86_64_unknown_linux_musl"
+            "$CC_x86_64_unknown_linux_musl" --version
+          '
 
       - name: Verify mismatched tag fails closed
         if: github.event_name == 'pull_request'
