@@ -90,7 +90,7 @@ jobs:
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             RELEASE_TAG="$GITHUB_REF_NAME" nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/package-release.sh'
           else
-            version="$({ cargo metadata --no-deps --format-version 1; } | python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["packages"][0]["version"])')"
+            version="$(nix develop --command python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
             RELEASE_TAG="v${version}" nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/package-release.sh'
           fi
 
