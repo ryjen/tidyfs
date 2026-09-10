@@ -110,6 +110,26 @@
             ];
           };
         }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          # Release artifacts are built with rustup's pinned Rust target and a musl C
+          # toolchain so bundled native dependencies cannot acquire Nix-store runtime
+          # loader/library dependencies.
+          release = pkgs.pkgsMusl.mkShell {
+            packages = [
+              pkgs.bash
+              pkgs.binutils
+              pkgs.coreutils
+              pkgs.diffutils
+              pkgs.git
+              pkgs.gnused
+              pkgs.gnutar
+              pkgs.gzip
+              pkgs.python3
+            ];
+            CC_x86_64_unknown_linux_musl = "${pkgs.pkgsMusl.stdenv.cc}/bin/cc";
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.pkgsMusl.stdenv.cc}/bin/cc";
+          };
+        }
       );
 
       formatter = forAllSystems (system: (import nixpkgs { inherit system; }).nixfmt-rfc-style);
