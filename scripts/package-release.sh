@@ -40,7 +40,8 @@ command -v readelf >/dev/null || {
   exit 1
 }
 
-if readelf -l "${binary}" | grep -q 'INTERP'; then
+program_headers="$(readelf -l "${binary}" 2>&1)"
+if grep -q 'INTERP' <<<"${program_headers}"; then
   echo "release binary unexpectedly contains a dynamic ELF interpreter" >&2
   exit 1
 fi
