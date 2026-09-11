@@ -110,9 +110,9 @@
             ];
           };
         }
-        // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+        // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
           # Keep the normal host toolchain for proc-macros/build scripts. Only the
-          # explicit musl target uses the musl C compiler/linker below.
+          # explicit x86_64 musl target uses the musl C compiler/linker below.
           release = pkgs.mkShell {
             packages = [
               pkgs.bash
