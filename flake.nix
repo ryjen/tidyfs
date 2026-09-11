@@ -29,6 +29,7 @@
 
             nativeBuildInputs = [
               pkgs.clippy
+              pkgs.man-db
               pkgs.mise
               pkgs.rustfmt
             ];
@@ -47,8 +48,10 @@
             '';
 
             postInstall = ''
+              install -Dm444 man/tidyfs.1 "$out/share/man/man1/tidyfs.1"
               "$out/bin/tidyfs" --help >/dev/null
               test "$("$out/bin/tidyfs" --version)" = "tidyfs ${cargoToml.package.version}"
+              MANPATH="$out/share/man" man -w tidyfs >/dev/null
             '';
 
             meta = {
@@ -97,10 +100,12 @@
               pkgs.clippy
               pkgs.coreutils
               pkgs.diffutils
+              pkgs.gh
               pkgs.git
               pkgs.gnused
               pkgs.gnutar
               pkgs.gzip
+              pkgs.man-db
               pkgs.mise
               pkgs.python3
               pkgs.rust-analyzer
@@ -112,17 +117,21 @@
         }
         // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
           # Keep the normal host toolchain for proc-macros/build scripts. Only the
-          # explicit x86_64 musl target uses the musl C compiler/linker below.
+          # explicit x86_64 musl target uses the musl C compiler/linker below. Release
+          # qualification also owns its man/GitHub CLI dependencies here rather than
+          # inheriting mutable runner-image tools.
           release = pkgs.mkShell {
             packages = [
               pkgs.bash
               pkgs.binutils
               pkgs.coreutils
               pkgs.diffutils
+              pkgs.gh
               pkgs.git
               pkgs.gnused
               pkgs.gnutar
               pkgs.gzip
+              pkgs.man-db
               pkgs.python3
               pkgs.stdenv.cc
             ];
