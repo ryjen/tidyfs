@@ -91,14 +91,43 @@
         {
           default = pkgs.mkShell {
             packages = [
+              pkgs.bash
               pkgs.cargo
               pkgs.cargo-audit
               pkgs.clippy
+              pkgs.coreutils
+              pkgs.diffutils
+              pkgs.git
+              pkgs.gnused
+              pkgs.gnutar
+              pkgs.gzip
               pkgs.mise
+              pkgs.python3
               pkgs.rust-analyzer
               pkgs.rustc
               pkgs.rustfmt
+              pkgs.stdenv.cc
             ];
+          };
+        }
+        // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          # Keep the normal host toolchain for proc-macros/build scripts. Only the
+          # explicit x86_64 musl target uses the musl C compiler/linker below.
+          release = pkgs.mkShell {
+            packages = [
+              pkgs.bash
+              pkgs.binutils
+              pkgs.coreutils
+              pkgs.diffutils
+              pkgs.git
+              pkgs.gnused
+              pkgs.gnutar
+              pkgs.gzip
+              pkgs.python3
+              pkgs.stdenv.cc
+            ];
+            CC_x86_64_unknown_linux_musl = "${pkgs.pkgsMusl.stdenv.cc}/bin/cc";
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgs.pkgsMusl.stdenv.cc}/bin/cc";
           };
         }
       );

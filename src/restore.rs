@@ -126,7 +126,57 @@ fn verify_identity(action: &RestoreAction, path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn atomic_rename_noreplace(source: &Path, destination: &Path) -> Result<()> {
+    use std::ffi::CString;
+    use std::os::raw::{c_int, c_long, c_uint};
+    use std::os::unix::ffi::OsStrExt;
+
+    const AT_FDCWD: c_int = -100;
+    const RENAME_NOREPLACE: c_uint = 1;
+    // Linux UAPI __NR_renameat2 values for the Linux architectures shipped by
+    // the repository's Nix/release surfaces.
+    #[cfg(target_arch = "x86_64")]
+    const SYS_RENAMEAT2: c_long = 316;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_RENAMEAT2: c_long = 276;
+
+    unsafe extern "C" {
+        fn syscall(number: c_long, ...) -> c_long;
+    }
+
+    let source = CString::new(source.as_os_str().as_bytes())
+        .context("source path contains an interior NUL byte")?;
+    let destination = CString::new(destination.as_os_str().as_bytes())
+        .context("destination path contains an interior NUL byte")?;
+
+    // SAFETY: the syscall number and argument layout are the Linux renameat2 ABI;
+    // both pointers are valid NUL-terminated strings for the duration of the call.
+    let result = unsafe {
+        syscall(
+            SYS_RENAMEAT2,
+            AT_FDCWD as c_long,
+            source.as_ptr(),
+            AT_FDCWD as c_long,
+            destination.as_ptr(),
+            RENAME_NOREPLACE as c_long,
+        )
+    };
+
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error().into())
+    }
+}
+
+#[cfg(all(
+    target_os = "linux",
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
 fn atomic_rename_noreplace(source: &Path, destination: &Path) -> Result<()> {
     use std::ffi::CString;
     use std::os::raw::{c_char, c_int, c_uint};

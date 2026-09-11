@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.95.0"
   CARGO_FUZZ_VERSION: "0.13.2"
   FUZZ_RUST_TOOLCHAIN: nightly-2026-08-12
 
@@ -25,37 +26,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
 
       - name: Cache Cargo data
         uses: Swatinem/rust-cache@v2
 
+      - name: Verify pinned native toolchain
+        run: nix develop --command bash -c 'command -v cc >/dev/null && cc --version'
+
       - name: Run static analysis
-        run: bash scripts/static-analysis.sh
+        run: nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/static-analysis.sh'
 
       - name: Run deterministic tests
-        run: cargo test --all-targets --all-features --locked
+        run: nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; cargo test --all-targets --all-features --locked'
 
       - name: Verify Cargo package
-        run: cargo package --locked
+        run: nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; cargo package --locked'
 
   audit:
     name: Dependency audit
     runs-on: runner-tidyfs
-    permissions:
-      contents: read
-      checks: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Audit Rust dependencies
-        uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Audit Rust dependencies with pinned repository toolchain
+        run: nix develop --command cargo audit
 
   fuzz-harness:
     name: Fuzz harnesses
@@ -70,15 +70,21 @@ jobs:
         with:
           toolchain: ${{ env.FUZZ_RUST_TOOLCHAIN }}
 
+      - name: Verify pinned native toolchain
+        run: nix develop --command bash -c 'command -v cc >/dev/null && cc --version'
+
       - name: Install pinned cargo-fuzz
-        run: cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
+        run: nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked'
 
       - name: Build all maintained fuzz targets
         shell: bash
         run: |
-          for target in ai_proposal_json ai_transport_response_json ai_goal_response_json; do
-            cargo fuzz build "$target"
-          done
+          nix develop --command bash -c '
+            export PATH="$HOME/.cargo/bin:$PATH"
+            for target in ai_proposal_json ai_transport_response_json ai_goal_response_json; do
+              cargo fuzz build "$target"
+            done
+          '
 
   nix-flake:
     name: Nix flake
@@ -100,22 +106,13 @@ jobs:
       - name: Smoke-test default app help and version
         shell: bash
         run: |
+          cargo_version="$(nix develop --command python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
           nix run .# -- --help >/dev/null
-          nix run .# -- --version | grep -Fx "tidyfs $(python3 - <<'PY'
-          import pathlib, tomllib
-          data = tomllib.loads(pathlib.Path('Cargo.toml').read_text())
-          print(data['package']['version'])
-          PY
-          )"
+          nix run .# -- --version | grep -Fx "tidyfs ${cargo_version}"
 
       - name: Verify Nix package version follows Cargo.toml
         shell: bash
         run: |
-          cargo_version="$(python3 - <<'PY'
-          import pathlib, tomllib
-          data = tomllib.loads(pathlib.Path('Cargo.toml').read_text())
-          print(data['package']['version'])
-          PY
-          )"
+          cargo_version="$(nix develop --command python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
           nix_version="$(nix eval --raw .#packages.x86_64-linux.tidyfs.version)"
           test "$nix_version" = "$cargo_version"

@@ -38,21 +38,27 @@ jobs:
         with:
           toolchain: ${{ env.FUZZ_RUST_TOOLCHAIN }}
 
+      - name: Verify pinned native toolchain
+        run: nix develop --command bash -c 'command -v cc >/dev/null && cc --version'
+
       - name: Install pinned cargo-fuzz
-        run: cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
+        run: nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked'
 
       - name: Build fuzz target
-        run: cargo fuzz build "${{ matrix.target }}"
+        run: nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; cargo fuzz build "${{ matrix.target }}"'
 
       - name: Run bounded fuzz campaign
         shell: bash
         run: |
           mkdir -p "fuzz/artifacts/${{ matrix.target }}"
-          cargo fuzz run "${{ matrix.target }}" -- \
-            -max_total_time=60 \
-            -timeout=5 \
-            -rss_limit_mb=2048 \
-            -artifact_prefix="fuzz/artifacts/${{ matrix.target }}/"
+          nix develop --command bash -c '
+            export PATH="$HOME/.cargo/bin:$PATH"
+            cargo fuzz run "${{ matrix.target }}" -- \
+              -max_total_time=60 \
+              -timeout=5 \
+              -rss_limit_mb=2048 \
+              -artifact_prefix="fuzz/artifacts/${{ matrix.target }}/"
+          '
 
       - name: Preserve fuzz failure artifacts
         if: failure()

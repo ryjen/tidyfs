@@ -2,7 +2,7 @@
 set -euo pipefail
 
 crate_name="tidyfs"
-target="${RELEASE_TARGET:-x86_64-unknown-linux-gnu}"
+target="${RELEASE_TARGET:-x86_64-unknown-linux-musl}"
 
 version="$({ cargo metadata --no-deps --format-version 1; } | python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["packages"][0]["version"])')"
 expected_tag="v${version}"
@@ -19,13 +19,45 @@ if [[ -n "${release_tag}" ]]; then
   fi
 fi
 
-host="$(rustc -vV | sed -n 's/^host: //p')"
-if [[ "${host}" != "${target}" ]]; then
-  echo "release target ${target} does not match Rust host ${host}" >&2
+case "${target}" in
+  x86_64-unknown-linux-musl) ;;
+  *)
+    echo "unsupported release target: ${target}; distributable Linux releases must use x86_64-unknown-linux-musl" >&2
+    exit 1
+    ;;
+esac
+
+cargo build --release --locked --target "${target}"
+
+binary="target/${target}/release/${crate_name}"
+if [[ ! -x "${binary}" ]]; then
+  echo "release binary missing or not executable: ${binary}" >&2
   exit 1
 fi
 
-cargo build --release --locked
+command -v readelf >/dev/null || {
+  echo "readelf is required to verify release portability" >&2
+  exit 1
+}
+
+program_headers="$(readelf -l "${binary}" 2>&1)"
+if grep -q 'INTERP' <<<"${program_headers}"; then
+  echo "release binary unexpectedly contains a dynamic ELF interpreter" >&2
+  exit 1
+fi
+
+# A static PIE may still contain a dynamic section for relocations. Runtime
+# portability depends on the absence of shared-library and runtime search-path
+# dependencies, not on whether arbitrary diagnostic/debug strings mention the
+# build environment.
+dynamic_section="$(readelf -d "${binary}" 2>&1)"
+if grep -Eq '\((NEEDED|RPATH|RUNPATH)\)' <<<"${dynamic_section}"; then
+  echo "release binary unexpectedly contains a dynamic runtime dependency or search path" >&2
+  printf '%s\n' "${dynamic_section}" >&2
+  exit 1
+fi
+
+"${binary}" --version >/dev/null
 
 bundle="${crate_name}-${version}-${target}"
 dist_dir="dist"
@@ -35,7 +67,7 @@ checksum="${archive}.sha256"
 
 rm -rf "${dist_dir}"
 mkdir -p "${bundle_dir}"
-cp "target/release/${crate_name}" "${bundle_dir}/${crate_name}"
+cp "${binary}" "${bundle_dir}/${crate_name}"
 cp README.md LICENSE-MIT LICENSE-APACHE "${bundle_dir}/"
 
 source_date_epoch="$(git log -1 --format=%ct)"
@@ -72,5 +104,6 @@ diff -u "${expected_contents}" "${actual_contents}"
   sha256sum --check "${bundle}.tar.gz.sha256"
 )
 
+echo "verified static portable binary ${binary}"
 echo "verified ${archive}"
 echo "verified ${checksum}"
