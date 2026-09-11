@@ -49,7 +49,7 @@ fi
 # portability depends on the absence of shared-library and runtime search-path
 # dependencies, not on whether arbitrary diagnostic/debug strings mention the
 # build environment.
-dynamic_section="$(readelf -d "${binary}" 2>&1 || true)"
+dynamic_section="$(readelf -d "${binary}" 2>&1)"
 if grep -Eq '\((NEEDED|RPATH|RUNPATH)\)' <<<"${dynamic_section}"; then
   echo "release binary unexpectedly contains a dynamic runtime dependency or search path" >&2
   printf '%s\n' "${dynamic_section}" >&2
