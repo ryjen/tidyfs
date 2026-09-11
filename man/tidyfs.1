@@ -1,0 +1,187 @@
+.TH TIDYFS 1 "September 2026" "tidyfs" "User Commands"
+.SH NAME
+tidyfs \- conservative filesystem cleanup and disk-usage intelligence
+.SH SYNOPSIS
+.B tidyfs
+.RI [ --db " PATH" ]
+.I COMMAND
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+.B tidyfs
+indexes filesystem facts, applies deterministic cleanup policy, can request bounded read-only AI advice from an explicitly selected numeric loopback endpoint, and executes only reversible cleanup operations admitted by deterministic policy.
+.PP
+AI output is untrusted input. It cannot create executable cleanup candidates, lower deterministic risk, remove policy blocks, authorize mutation, or determine authoritative reclaim totals.
+.PP
+The default SQLite database is
+.IR ~/.local/share/tidyfs/tidyfs.db .
+The default quarantine root is
+.IR ~/.local/share/tidyfs/quarantine/ .
+.SH GLOBAL OPTIONS
+.TP
+.BI --db " PATH"
+Use an explicit SQLite database path. This has precedence over
+.B TIDYFS_DB
+and the default database path.
+.TP
+.B --help
+Show command help.
+.TP
+.B --version
+Show the program version.
+.SH COMMANDS
+.TP
+.BI scan " ROOT"
+Scan a filesystem tree, index entries, and run deterministic classification. Use
+.B --one-file-system
+to avoid crossing device boundaries,
+.B --include-pseudo
+to include Linux pseudo-filesystems, and
+.BI --jobs " N"
+to select scanner concurrency.
+.TP
+.B classify
+Run deterministic classification for an existing or latest completed scan. Use
+.B --summary
+to print counts by label.
+.TP
+.B analyze
+Send a bounded metadata view of classified facts to an explicitly selected numeric loopback AI gateway. Requires
+.BI --endpoint " URL" .
+Optional controls include scan/root selection, risk ceiling, path disclosure mode, response-size bound, and connection/read timeouts.
+.TP
+.B top
+Show the largest indexed directories. Optional controls include scan id, limit, relative depth, and subtree root.
+.TP
+.BI explain " PATH"
+Explain a path from deterministic classifications and stored advisory AI evidence. Stored evidence is revalidated for freshness before use.
+.TP
+.B plan
+Build and persist a cleanup plan from deterministic policy. Optional AI enrichment may make already-eligible candidates more conservative but cannot widen eligibility or authority.
+.TP
+.B recommend
+Ask a numeric loopback AI gateway to select a read-only subset of an existing deterministic plan for a target reclaim size. Recommendations do not mutate the plan or authorize cleanup.
+.TP
+.B clean
+Preview or execute allowed reversible cleanup candidates. Use
+.B --dry-run
+for preview. Actual cleanup requires both
+.B --safe
+and
+.B --interactive .
+.B --safe
+is a dedicated mutation gate and also constrains effective cleanup risk to low; supplying
+.B --risk low
+without
+.B --safe
+does not authorize mutation.
+.TP
+.B adapters
+List read-only tool-native cleanup adapters. Adapter findings may be reported or planned but are not executable by the raw filesystem quarantine path.
+.TP
+.B actions
+List recorded cleanup and restore actions.
+.TP
+.B recover
+Reconcile interrupted action state without moving or overwriting files. Select one action with
+.BI --action " ID"
+or all interrupted actions with
+.B --all .
+.TP
+.B restore
+Restore a quarantined action selected with
+.BI --action " ID"
+or
+.B --latest .
+.SH INPUT AND OUTPUT
+Current pre-1.0 command output is human-oriented text unless a command documents otherwise. It is not yet a stable structured machine contract. Scripts should not depend on incidental prose formatting across minor pre-1.0 releases.
+.PP
+Diagnostics and recovery warnings are written to standard error. Commands do not treat piped input as approval or mutation authority.
+.SH EXIT STATUS
+.TP
+.B 0
+The requested command completed successfully.
+.TP
+.B 2
+Command-line parsing or usage failed before command execution.
+.TP
+.B 1
+A runtime operation failed, including filesystem, database, policy, stale-state, gateway, validation, or recovery errors.
+.SH ENVIRONMENT
+.TP
+.B TIDYFS_DB
+Database path used when
+.B --db
+is not supplied.
+.TP
+.B HOME
+Used for tilde expansion and the default state directory when no explicit database path is supplied.
+.SH SAFETY AND AUTHORITY
+.B tidyfs
+does not permanently delete files. Reversible cleanup is serialized through a mutation lock, revalidates source identity and filesystem constraints, records transitional action state before mutation, and quarantines only admitted filesystem candidates.
+.PP
+.B clean
+without
+.B --dry-run
+requires both
+.B --safe
+and
+.B --interactive .
+Neither
+.B --interactive
+alone nor
+.B --risk low
+without
+.B --safe
+authorizes cleanup. The explicit
+.B restore
+and
+.B recover
+commands are separate effectful operations and acquire the same mutation lock boundary.
+.PP
+AI endpoints are restricted to numeric loopback addresses. The AI path carries no credentials, follows no redirects, and remains advisory only.
+.SH FILES
+.TP
+.I ~/.local/share/tidyfs/tidyfs.db
+Default SQLite index and action database.
+.TP
+.I ~/.local/share/tidyfs/quarantine/
+Default reversible quarantine storage.
+.SH EXAMPLES
+Scan a home directory without crossing filesystems:
+.PP
+.nf
+.RS
+tidyfs scan ~ --one-file-system --jobs 8
+.RE
+.fi
+.PP
+Preview only low-risk cleanup candidates:
+.PP
+.nf
+.RS
+tidyfs plan --safe
+tidyfs clean --dry-run --safe
+.RE
+.fi
+.PP
+Execute the separately authorized reversible cleanup path:
+.PP
+.nf
+.RS
+tidyfs clean --safe --interactive
+.RE
+.fi
+.PP
+Inspect output through an ordinary Unix pipeline. The current output is human-oriented, so this is for interactive inspection rather than a stable machine API:
+.PP
+.nf
+.RS
+tidyfs top --limit 50 | head -n 10
+.RE
+.fi
+.SH SEE ALSO
+.BR find (1),
+.BR du (1),
+.BR sqlite3 (1)
+.SH NOTES
+The CLI is pre-1.0. Public structured-output and finer-grained exit-status contracts may be introduced in later releases; such contracts should be treated as versioned interfaces once declared stable.

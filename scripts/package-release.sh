@@ -48,8 +48,7 @@ fi
 
 # A static PIE may still contain a dynamic section for relocations. Runtime
 # portability depends on the absence of shared-library and runtime search-path
-# dependencies, not on whether arbitrary diagnostic/debug strings mention the
-# build environment.
+# dependencies, not on arbitrary diagnostic/build strings embedded in the file.
 dynamic_section="$(readelf -d "${binary}" 2>&1)"
 if grep -Eq '\((NEEDED|RPATH|RUNPATH)\)' <<<"${dynamic_section}"; then
   echo "release binary unexpectedly contains a dynamic runtime dependency or search path" >&2
@@ -66,9 +65,20 @@ archive="${dist_dir}/${bundle}.tar.gz"
 checksum="${archive}.sha256"
 
 rm -rf "${dist_dir}"
-mkdir -p "${bundle_dir}"
-cp "${binary}" "${bundle_dir}/${crate_name}"
+mkdir -p "${bundle_dir}/bin" "${bundle_dir}/share/man/man1"
+cp "${binary}" "${bundle_dir}/bin/${crate_name}"
+ln -s "bin/${crate_name}" "${bundle_dir}/${crate_name}"
+cp "man/${crate_name}.1" "${bundle_dir}/share/man/man1/${crate_name}.1"
 cp README.md LICENSE-MIT LICENSE-APACHE "${bundle_dir}/"
+
+test -x "${bundle_dir}/bin/${crate_name}"
+test -L "${bundle_dir}/${crate_name}"
+test "$(readlink "${bundle_dir}/${crate_name}")" = "bin/${crate_name}"
+test -x "${bundle_dir}/${crate_name}"
+test -r "${bundle_dir}/share/man/man1/${crate_name}.1"
+"${bundle_dir}/bin/${crate_name}" --help >/dev/null
+"${bundle_dir}/bin/${crate_name}" --version | grep -Fx "${crate_name} ${version}" >/dev/null
+MANPATH="${bundle_dir}/share/man" man -w "${crate_name}" >/dev/null
 
 source_date_epoch="$(git log -1 --format=%ct)"
 tar \
@@ -88,7 +98,8 @@ tar \
 
 actual_contents="$(mktemp)"
 expected_contents="$(mktemp)"
-trap 'rm -f "${actual_contents}" "${expected_contents}"' EXIT
+extract_dir="$(mktemp -d)"
+trap 'rm -f "$actual_contents" "$expected_contents"; rm -rf "$extract_dir"' EXIT
 
 tar -tzf "${archive}" | sort > "${actual_contents}"
 printf '%s\n' \
@@ -96,7 +107,13 @@ printf '%s\n' \
   "${bundle}/LICENSE-APACHE" \
   "${bundle}/LICENSE-MIT" \
   "${bundle}/README.md" \
-  "${bundle}/${crate_name}" | sort > "${expected_contents}"
+  "${bundle}/${crate_name}" \
+  "${bundle}/bin/" \
+  "${bundle}/bin/${crate_name}" \
+  "${bundle}/share/" \
+  "${bundle}/share/man/" \
+  "${bundle}/share/man/man1/" \
+  "${bundle}/share/man/man1/${crate_name}.1" | sort > "${expected_contents}"
 
 diff -u "${expected_contents}" "${actual_contents}"
 (
@@ -104,6 +121,18 @@ diff -u "${expected_contents}" "${actual_contents}"
   sha256sum --check "${bundle}.tar.gz.sha256"
 )
 
+tar -xzf "${archive}" -C "${extract_dir}"
+extracted_bundle="${extract_dir}/${bundle}"
+test -x "${extracted_bundle}/bin/${crate_name}"
+test -L "${extracted_bundle}/${crate_name}"
+test "$(readlink "${extracted_bundle}/${crate_name}")" = "bin/${crate_name}"
+test -x "${extracted_bundle}/${crate_name}"
+test -r "${extracted_bundle}/share/man/man1/${crate_name}.1"
+env -i PATH=/usr/bin:/bin "${extracted_bundle}/bin/${crate_name}" --version | grep -Fx "${crate_name} ${version}" >/dev/null
+env -i PATH=/usr/bin:/bin "${extracted_bundle}/${crate_name}" --version | grep -Fx "${crate_name} ${version}" >/dev/null
+MANPATH="${extracted_bundle}/share/man" man -w "${crate_name}" >/dev/null
+
 echo "verified static portable binary ${binary}"
+echo "verified extracted artifact contract ${bundle}"
 echo "verified ${archive}"
 echo "verified ${checksum}"
