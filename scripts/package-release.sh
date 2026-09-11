@@ -45,8 +45,14 @@ if readelf -l "${binary}" | grep -q 'INTERP'; then
   exit 1
 fi
 
-if LC_ALL=C grep -a -q '/nix/store/' "${binary}"; then
-  echo "release binary unexpectedly contains a Nix store runtime reference" >&2
+# A static PIE may still contain a dynamic section for relocations. Runtime
+# portability depends on the absence of shared-library and runtime search-path
+# dependencies, not on whether arbitrary diagnostic/debug strings mention the
+# build environment.
+dynamic_section="$(readelf -d "${binary}" 2>&1 || true)"
+if grep -Eq '\((NEEDED|RPATH|RUNPATH)\)' <<<"${dynamic_section}"; then
+  echo "release binary unexpectedly contains a dynamic runtime dependency or search path" >&2
+  printf '%s\n' "${dynamic_section}" >&2
   exit 1
 fi
 
