@@ -71,11 +71,36 @@ ln -s "bin/${crate_name}" "${bundle_dir}/${crate_name}"
 cp "man/${crate_name}.1" "${bundle_dir}/share/man/man1/${crate_name}.1"
 cp README.md LICENSE-MIT LICENSE-APACHE "${bundle_dir}/"
 
+# Normalize payload modes explicitly so archive permissions do not depend on
+# checkout defaults or the runner umask.
+chmod 0755 \
+  "${bundle_dir}" \
+  "${bundle_dir}/bin" \
+  "${bundle_dir}/share" \
+  "${bundle_dir}/share/man" \
+  "${bundle_dir}/share/man/man1" \
+  "${bundle_dir}/bin/${crate_name}"
+chmod 0644 \
+  "${bundle_dir}/README.md" \
+  "${bundle_dir}/LICENSE-MIT" \
+  "${bundle_dir}/LICENSE-APACHE" \
+  "${bundle_dir}/share/man/man1/${crate_name}.1"
+
 test -x "${bundle_dir}/bin/${crate_name}"
 test -L "${bundle_dir}/${crate_name}"
 test "$(readlink "${bundle_dir}/${crate_name}")" = "bin/${crate_name}"
 test -x "${bundle_dir}/${crate_name}"
 test -r "${bundle_dir}/share/man/man1/${crate_name}.1"
+test "$(stat -c '%a' "${bundle_dir}")" = "755"
+test "$(stat -c '%a' "${bundle_dir}/bin")" = "755"
+test "$(stat -c '%a' "${bundle_dir}/share")" = "755"
+test "$(stat -c '%a' "${bundle_dir}/share/man")" = "755"
+test "$(stat -c '%a' "${bundle_dir}/share/man/man1")" = "755"
+test "$(stat -c '%a' "${bundle_dir}/bin/${crate_name}")" = "755"
+test "$(stat -c '%a' "${bundle_dir}/README.md")" = "644"
+test "$(stat -c '%a' "${bundle_dir}/LICENSE-MIT")" = "644"
+test "$(stat -c '%a' "${bundle_dir}/LICENSE-APACHE")" = "644"
+test "$(stat -c '%a' "${bundle_dir}/share/man/man1/${crate_name}.1")" = "644"
 "${bundle_dir}/bin/${crate_name}" --help >/dev/null
 "${bundle_dir}/bin/${crate_name}" --version | grep -Fx "${crate_name} ${version}" >/dev/null
 MANPATH="${bundle_dir}/share/man" man -w "${crate_name}" >/dev/null
@@ -128,11 +153,22 @@ test -L "${extracted_bundle}/${crate_name}"
 test "$(readlink "${extracted_bundle}/${crate_name}")" = "bin/${crate_name}"
 test -x "${extracted_bundle}/${crate_name}"
 test -r "${extracted_bundle}/share/man/man1/${crate_name}.1"
+test "$(stat -c '%a' "${extracted_bundle}")" = "755"
+test "$(stat -c '%a' "${extracted_bundle}/bin")" = "755"
+test "$(stat -c '%a' "${extracted_bundle}/share")" = "755"
+test "$(stat -c '%a' "${extracted_bundle}/share/man")" = "755"
+test "$(stat -c '%a' "${extracted_bundle}/share/man/man1")" = "755"
+test "$(stat -c '%a' "${extracted_bundle}/bin/${crate_name}")" = "755"
+test "$(stat -c '%a' "${extracted_bundle}/README.md")" = "644"
+test "$(stat -c '%a' "${extracted_bundle}/LICENSE-MIT")" = "644"
+test "$(stat -c '%a' "${extracted_bundle}/LICENSE-APACHE")" = "644"
+test "$(stat -c '%a' "${extracted_bundle}/share/man/man1/${crate_name}.1")" = "644"
 env -i PATH=/usr/bin:/bin "${extracted_bundle}/bin/${crate_name}" --version | grep -Fx "${crate_name} ${version}" >/dev/null
 env -i PATH=/usr/bin:/bin "${extracted_bundle}/${crate_name}" --version | grep -Fx "${crate_name} ${version}" >/dev/null
 MANPATH="${extracted_bundle}/share/man" man -w "${crate_name}" >/dev/null
 
 echo "verified static portable binary ${binary}"
+echo "verified deterministic artifact permissions ${bundle}"
 echo "verified extracted artifact contract ${bundle}"
 echo "verified ${archive}"
 echo "verified ${checksum}"
