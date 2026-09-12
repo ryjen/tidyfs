@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - .github/workflows/create-release-tag.yml
       - scripts/package-release.sh
       - flake.nix
       - flake.lock
@@ -11,10 +12,13 @@ on:
       - Cargo.lock
       - src/**
       - rules/**
+      - man/**
       - README.md
       - LICENSE-MIT
       - LICENSE-APACHE
   push:
+    branches:
+      - main
     tags:
       - 'v*.*.*'
   workflow_dispatch:
@@ -25,12 +29,14 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
 
-# PR validation is replaceable; tag/manual publication serializes by bare tag and is never cancelled in progress.
+# PR validation is replaceable; main qualification is keyed by main, while
+# tag/manual publication serializes by bare tag and is never cancelled in progress.
 concurrency:
   group: release-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -56,6 +62,7 @@ jobs:
           targets: ${{ env.RELEASE_TARGET }}
 
       - name: Verify pinned host and target toolchains
+        shell: bash
         run: |
           nix develop .#release --command bash -c '
             set -euo pipefail
@@ -63,7 +70,56 @@ jobs:
             cc --version
             test -x "$CC_x86_64_unknown_linux_musl"
             "$CC_x86_64_unknown_linux_musl" --version
+            command -v gh >/dev/null
+            command -v man >/dev/null
           '
+
+      - name: Verify immutable release source
+        if: >-
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+        shell: bash
+        env:
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            release_tag="$DISPATCH_TAG"
+          else
+            release_tag="$GITHUB_REF_NAME"
+          fi
+
+          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release tag must match vX.Y.Z: $release_tag" >&2
+            exit 1
+          fi
+
+          git fetch --force --prune --tags origin main
+          tag_commit="$(git rev-parse "refs/tags/${release_tag}^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          if [[ "$head_commit" != "$tag_commit" ]]; then
+            echo "workflow checkout $head_commit does not match ${release_tag} commit $tag_commit" >&2
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "$head_commit" origin/main; then
+            echo "release commit $head_commit is not contained in current main" >&2
+            exit 1
+          fi
+
+          for workflow in ci.yml release.yml; do
+            success="$(
+              nix develop .#release --command gh api \
+                "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$head_commit&status=completed&per_page=100" \
+                --jq '[.workflow_runs[] | select(.conclusion == "success" and .event == "push" and .head_branch == "main")] | length > 0'
+            )"
+            if [[ "$success" != "true" ]]; then
+              echo "no successful main-push $workflow run found for release commit $head_commit" >&2
+              exit 1
+            fi
+          done
 
       - name: Verify mismatched tag fails closed
         if: github.event_name == 'pull_request'
@@ -71,25 +127,6 @@ jobs:
         run: |
           if RELEASE_TAG="v999.999.999" nix develop .#release --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; bash scripts/package-release.sh'; then
             echo "mismatched release tag unexpectedly passed validation" >&2
-            exit 1
-          fi
-
-      - name: Verify dispatched tag is exact checkout
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ github.event.inputs.tag }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "release tag must match vX.Y.Z: $RELEASE_TAG" >&2
-            exit 1
-          fi
-          git fetch --force --tags origin
-          tag_commit="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
-          head_commit="$(git rev-parse HEAD)"
-          if [[ "$head_commit" != "$tag_commit" ]]; then
-            echo "workflow checkout $head_commit does not match ${RELEASE_TAG} commit $tag_commit" >&2
             exit 1
           fi
 
@@ -112,9 +149,9 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          binaries=(dist/tidyfs-*-"${RELEASE_TARGET}"/tidyfs)
+          binaries=(dist/tidyfs-*-"${RELEASE_TARGET}"/bin/tidyfs)
           if (( ${#binaries[@]} != 1 )); then
-            echo "expected exactly one release binary, found ${#binaries[@]}" >&2
+            echo "expected exactly one packaged release binary, found ${#binaries[@]}" >&2
             exit 1
           fi
           env -i PATH=/usr/bin:/bin "${binaries[0]}" --version
@@ -136,6 +173,7 @@ jobs:
     needs: verify
     runs-on: runner-tidyfs
     permissions:
+      actions: read
       contents: write
     steps:
       - name: Download verified release assets
@@ -155,29 +193,94 @@ jobs:
             echo "RELEASE_TAG=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
           fi
 
-      - name: Verify handed-off checksum
-        shell: bash
-        run: |
-          version="${RELEASE_TAG#v}"
-          bundle="tidyfs-${version}-${RELEASE_TARGET}"
-          test -f "dist/${bundle}.tar.gz"
-          test -f "dist/${bundle}.tar.gz.sha256"
-          (
-            cd dist
-            sha256sum --check "${bundle}.tar.gz.sha256"
-          )
+      # Deliberately source-free: this job consumes only the verified artifact handoff
+      # from the read-only verify job and the scoped GitHub release API.
+      - name: Verify handed-off checksum and publish GitHub release
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const crypto = require('crypto');
+            const fs = require('fs');
+            const path = require('path');
 
-      - name: Create GitHub release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          version="${RELEASE_TAG#v}"
-          bundle="tidyfs-${version}-${RELEASE_TARGET}"
-          gh release create "$RELEASE_TAG" \
-            "dist/${bundle}.tar.gz" \
-            "dist/${bundle}.tar.gz.sha256" \
-            --verify-tag \
-            --generate-notes \
-            --title "tidyfs $RELEASE_TAG"
+            const tag = process.env.RELEASE_TAG;
+            const target = process.env.RELEASE_TARGET;
+            if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(tag || '')) {
+              throw new Error(`invalid release tag: ${tag}`);
+            }
+
+            const version = tag.slice(1);
+            const bundle = `tidyfs-${version}-${target}`;
+            const archive = path.join('dist', `${bundle}.tar.gz`);
+            const checksum = `${archive}.sha256`;
+
+            for (const file of [archive, checksum]) {
+              if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
+                throw new Error(`release asset is not a regular file: ${file}`);
+              }
+            }
+
+            const checksumLine = fs.readFileSync(checksum, 'utf8').trim();
+            const match = checksumLine.match(/^([0-9a-f]{64})\s+\*?(.+)$/);
+            if (!match || match[2] !== path.basename(archive)) {
+              throw new Error(`invalid checksum manifest: ${checksum}`);
+            }
+
+            const actual = crypto
+              .createHash('sha256')
+              .update(fs.readFileSync(archive))
+              .digest('hex');
+            if (actual !== match[1]) {
+              throw new Error(`checksum mismatch for ${archive}`);
+            }
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            let releaseId;
+            try {
+              const release = await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                name: `tidyfs ${tag}`,
+                draft: true,
+                prerelease: false,
+                generate_release_notes: true,
+              });
+              releaseId = release.data.id;
+
+              for (const [file, contentType] of [
+                [archive, 'application/gzip'],
+                [checksum, 'text/plain'],
+              ]) {
+                const data = fs.readFileSync(file);
+                await github.rest.repos.uploadReleaseAsset({
+                  owner,
+                  repo,
+                  release_id: releaseId,
+                  name: path.basename(file),
+                  data,
+                  headers: {
+                    'content-type': contentType,
+                    'content-length': data.length,
+                  },
+                });
+              }
+
+              await github.rest.repos.updateRelease({
+                owner,
+                repo,
+                release_id: releaseId,
+                draft: false,
+              });
+            } catch (error) {
+              if (releaseId) {
+                try {
+                  await github.rest.repos.deleteRelease({ owner, repo, release_id: releaseId });
+                } catch (cleanupError) {
+                  core.warning(`failed to remove draft release ${releaseId}: ${cleanupError.message}`);
+                }
+              }
+              throw error;
+            }

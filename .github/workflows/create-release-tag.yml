@@ -1,0 +1,170 @@
+name: Create Release Tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: main or the exact current main commit SHA
+        required: true
+        default: main
+        type: string
+      confirmation:
+        description: Type CREATE TAG
+        required: true
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: create-release-tag
+  cancel-in-progress: false
+
+jobs:
+  create-tag:
+    name: Validate and create immutable release tag
+    runs-on: runner-tidyfs
+    steps:
+      - name: Checkout complete repository history without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve and validate release identity
+        id: release
+        env:
+          TARGET: ${{ inputs.target }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$CONFIRMATION" != "CREATE TAG" ]]; then
+            echo "confirmation must be exactly CREATE TAG" >&2
+            exit 1
+          fi
+
+          main_sha="$(nix develop --command gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          checkout_sha="$(git rev-parse HEAD^{commit})"
+          if [[ "$checkout_sha" != "$main_sha" ]]; then
+            echo "workflow checkout is not current main; rerun against the latest main" >&2
+            echo "checkout: $checkout_sha" >&2
+            echo "main:     $main_sha" >&2
+            exit 1
+          fi
+
+          if [[ "$TARGET" == "main" ]]; then
+            target_sha="$main_sha"
+          elif [[ "$TARGET" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            target_sha="${TARGET,,}"
+          else
+            echo "target must be 'main' or a full 40-character commit SHA" >&2
+            exit 1
+          fi
+
+          if [[ "$target_sha" != "$main_sha" ]]; then
+            echo "target must equal current main" >&2
+            echo "target: $target_sha" >&2
+            echo "main:   $main_sha" >&2
+            exit 1
+          fi
+
+          version="$(nix develop --command python3 -c 'import re, tomllib; v=tomllib.load(open("Cargo.toml", "rb"))["package"]["version"]; assert re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", v), f"release version must be stable SemVer: {v}"; print(v)')"
+          tag="v${version}"
+
+          matching_refs="$(nix develop --command gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$tag" --jq 'length')"
+          if [[ "$matching_refs" != "0" ]]; then
+            echo "tag or matching tag prefix already exists: $tag" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$target_sha" >> "$GITHUB_OUTPUT"
+          echo "authorized immutable tag $tag at $target_sha"
+
+      - name: Require successful exact-main qualification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ steps.release.outputs.target_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for workflow in ci.yml release.yml; do
+            success="$(
+              nix develop --command gh api \
+                "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$TARGET_SHA&status=completed&per_page=100" \
+                --jq '[.workflow_runs[] | select(.conclusion == "success" and .event == "push" and .head_branch == "main")] | length > 0'
+            )"
+            if [[ "$success" != "true" ]]; then
+              echo "no successful main-push $workflow run found for release commit $TARGET_SHA" >&2
+              exit 1
+            fi
+          done
+
+      - name: Revalidate current main before tag mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ steps.release.outputs.target_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_main="$(nix develop --command gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          if [[ "$current_main" != "$TARGET_SHA" ]]; then
+            echo "main advanced during release qualification; rerun against current main" >&2
+            echo "qualified: $TARGET_SHA" >&2
+            echo "current:   $current_main" >&2
+            exit 1
+          fi
+
+      - name: Create annotated tag object
+        id: tag_object
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          TARGET_SHA: ${{ steps.release.outputs.target_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_object_sha="$(
+            nix develop --command gh api \
+              --method POST \
+              "repos/$GITHUB_REPOSITORY/git/tags" \
+              -f tag="$TAG" \
+              -f message="tidyfs $TAG" \
+              -f object="$TARGET_SHA" \
+              -f type=commit \
+              --jq .sha
+          )"
+          echo "sha=$tag_object_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Publish immutable tag reference
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          TAG_OBJECT_SHA: ${{ steps.tag_object.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop --command gh api \
+            --method POST \
+            "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$TAG" \
+            -f sha="$TAG_OBJECT_SHA"
+
+      - name: Dispatch release workflow at immutable tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop --command gh workflow run release.yml --ref "$TAG" -f tag="$TAG"
+
+      - name: Report release trigger
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          TARGET_SHA: ${{ steps.release.outputs.target_sha }}
+        run: echo "Created $TAG at $TARGET_SHA and dispatched the release workflow at the immutable tag."
