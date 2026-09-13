@@ -54,12 +54,7 @@ jobs:
           nix develop --command bash -c '
             set -euo pipefail
             export PATH="$HOME/.cargo/bin:$PATH"
-            libstdcpp="$(cc -print-file-name=libstdc++.so.6)"
-            if [[ "$libstdcpp" == "libstdc++.so.6" || ! -f "$libstdcpp" ]]; then
-              echo "pinned libstdc++.so.6 runtime could not be resolved" >&2
-              exit 1
-            fi
-            export LD_LIBRARY_PATH="$(dirname "$libstdcpp")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            test -n "${LD_LIBRARY_PATH:-}"
             cargo fuzz run "${{ matrix.target }}" -- \
               -max_total_time=60 \
               -timeout=5 \
