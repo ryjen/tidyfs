@@ -86,6 +86,23 @@ jobs:
             done
           '
 
+      - name: Smoke-test fuzz target runtimes
+        shell: bash
+        run: |
+          nix develop --command bash -c '
+            set -euo pipefail
+            export PATH="$HOME/.cargo/bin:$PATH"
+            libstdcpp="$(cc -print-file-name=libstdc++.so.6)"
+            if [[ "$libstdcpp" == "libstdc++.so.6" || ! -f "$libstdcpp" ]]; then
+              echo "pinned libstdc++.so.6 runtime could not be resolved" >&2
+              exit 1
+            fi
+            export LD_LIBRARY_PATH="$(dirname "$libstdcpp")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            for target in ai_proposal_json ai_transport_response_json ai_goal_response_json; do
+              cargo fuzz run "$target" -- -runs=1 -timeout=5 -rss_limit_mb=2048
+            done
+          '
+
   nix-flake:
     name: Nix flake
     runs-on: runner-tidyfs
