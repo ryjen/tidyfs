@@ -92,28 +92,36 @@
           pkgs = import nixpkgs { inherit system; };
         in
         {
-          default = pkgs.mkShell {
-            packages = [
-              pkgs.bash
-              pkgs.cargo
-              pkgs.cargo-audit
-              pkgs.clippy
-              pkgs.coreutils
-              pkgs.diffutils
-              pkgs.gh
-              pkgs.git
-              pkgs.gnused
-              pkgs.gnutar
-              pkgs.gzip
-              pkgs.man-db
-              pkgs.mise
-              pkgs.python3
-              pkgs.rust-analyzer
-              pkgs.rustc
-              pkgs.rustfmt
-              pkgs.stdenv.cc
-            ];
-          };
+          default = pkgs.mkShell (
+            {
+              packages = [
+                pkgs.bash
+                pkgs.cargo
+                pkgs.cargo-audit
+                pkgs.clippy
+                pkgs.coreutils
+                pkgs.diffutils
+                pkgs.gh
+                pkgs.git
+                pkgs.gnused
+                pkgs.gnutar
+                pkgs.gzip
+                pkgs.man-db
+                pkgs.mise
+                pkgs.python3
+                pkgs.rust-analyzer
+                pkgs.rustc
+                pkgs.rustfmt
+                pkgs.stdenv.cc
+              ];
+            }
+            // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+              # libFuzzer targets link against the pinned GCC C++ runtime. Expose that
+              # runtime from the repository-owned shell so fuzz binaries execute without
+              # depending on mutable host linker configuration.
+              LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ];
+            }
+          );
         }
         // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
           # Keep the normal host toolchain for proc-macros/build scripts. Only the
