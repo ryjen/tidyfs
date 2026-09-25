@@ -202,6 +202,8 @@ tidyfs clean --dry-run --risk medium
 
 The default `adapters` output remains human-oriented. `tidyfs adapters --format json` exposes the first stable CLI machine contract as one `tidyfs.cli.adapters/v1` JSON document. Adapter inspection is dispatched before TidyFS database initialization, so it does not create or migrate local TidyFS state; detected adapters may still run their documented read-only preview commands. Machine results expose cleanup commands only as `suggested_cleanup_command` and explicitly report `cleanup_executable: false`; the JSON contract does not grant execution authority.
 
+The machine-readable contract is published as [`schemas/tidyfs-cli-adapters-v1.schema.json`](schemas/tidyfs-cli-adapters-v1.schema.json). Additive or breaking changes to that contract must follow its versioning rather than relying on incidental human output.
+
 Adapter candidates use:
 
 ```text
