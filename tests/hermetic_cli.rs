@@ -90,6 +90,14 @@ fn adapters_json_is_versioned_and_does_not_initialize_state() {
         serde_json::from_slice(&output.stdout).expect("adapters output should be one JSON document");
     assert_eq!(value["schema"], "tidyfs.cli.adapters/v1");
     assert_eq!(value["command"], "adapters");
+
+    let schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../schemas/tidyfs-cli-adapters-v1.schema.json"
+    ))
+    .expect("published adapters schema should be valid JSON");
+    assert_eq!(schema["properties"]["schema"]["const"], value["schema"]);
+    assert_eq!(schema["properties"]["command"]["const"], value["command"]);
+    assert_eq!(schema["additionalProperties"], false);
     let adapters = value["adapters"]
         .as_array()
         .expect("adapters should be an array");
@@ -103,6 +111,10 @@ fn adapters_json_is_versioned_and_does_not_initialize_state() {
             .iter()
             .all(|adapter| adapter["cleanup_executable"] == false),
         "adapter machine output must not imply cleanup execution authority"
+    );
+    assert_eq!(
+        schema["properties"]["adapters"]["items"]["properties"]["cleanup_executable"]["const"],
+        false
     );
 }
 
