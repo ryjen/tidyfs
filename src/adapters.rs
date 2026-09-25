@@ -182,11 +182,11 @@ pub fn build_adapter_candidates(max_risk: Risk) -> Vec<AdapterCandidate> {
     let mut out = Vec::new();
 
     for spec in ADAPTERS {
-        if !command_exists(spec.preview_command[0]) {
+        let (detected, summary) = inspect_preview(spec.preview_command);
+        if !detected {
             continue;
         }
 
-        let summary = run_preview_summary(spec.preview_command);
         let blocked_reason = if spec.risk > max_risk {
             Some(format!(
                 "adapter risk {} exceeds selected threshold {}",
@@ -222,12 +222,7 @@ fn inspect_adapters() -> Vec<AdapterStatus> {
     ADAPTERS
         .iter()
         .map(|spec| {
-            let detected = command_exists(spec.preview_command[0]);
-            let summary = if detected {
-                run_preview_summary(spec.preview_command)
-            } else {
-                String::new()
-            };
+            let (detected, summary) = inspect_preview(spec.preview_command);
 
             AdapterStatus {
                 name: spec.name,
@@ -240,20 +235,9 @@ fn inspect_adapters() -> Vec<AdapterStatus> {
         .collect()
 }
 
-fn command_exists(command: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|paths| {
-            std::env::split_paths(&paths).any(|dir| {
-                let candidate = dir.join(command);
-                candidate.exists()
-            })
-        })
-        .unwrap_or(false)
-}
-
-fn run_preview_summary(argv: &[&str]) -> String {
+fn inspect_preview(argv: &[&str]) -> (bool, String) {
     if argv.is_empty() {
-        return "no preview command".to_string();
+        return (false, String::new());
     }
 
     let output = Command::new(argv[0]).args(&argv[1..]).output();
@@ -261,7 +245,7 @@ fn run_preview_summary(argv: &[&str]) -> String {
     match output {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            summarize_output(&stdout)
+            (true, summarize_output(&stdout))
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -271,13 +255,16 @@ fn run_preview_summary(argv: &[&str]) -> String {
             } else {
                 stdout
             };
-            format!(
-                "preview exited with {}; {}",
-                output.status,
-                summarize_output(&text)
+            (
+                true,
+                format!(
+                    "preview exited with {}; {}",
+                    output.status,
+                    summarize_output(&text)
+                ),
             )
         }
-        Err(err) => format!("preview unavailable: {err}"),
+        Err(_) => (false, String::new()),
     }
 }
 
