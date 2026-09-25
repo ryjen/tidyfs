@@ -77,7 +77,10 @@ fn adapters_json_is_versioned_and_does_not_initialize_state() {
 
     let output = sandbox.run_with_empty_path(&["adapters", "--format", "json"]);
     assert_success(&output);
-    assert!(output.stderr.is_empty(), "machine mode wrote diagnostics to stderr");
+    assert!(
+        output.stderr.is_empty(),
+        "machine mode wrote diagnostics to stderr"
+    );
     assert!(
         !sandbox.db_path.exists(),
         "read-only adapter inspection initialized the TidyFS database"
@@ -87,7 +90,9 @@ fn adapters_json_is_versioned_and_does_not_initialize_state() {
         serde_json::from_slice(&output.stdout).expect("adapters output should be one JSON document");
     assert_eq!(value["schema"], "tidyfs.cli.adapters/v1");
     assert_eq!(value["command"], "adapters");
-    let adapters = value["adapters"].as_array().expect("adapters should be an array");
+    let adapters = value["adapters"]
+        .as_array()
+        .expect("adapters should be an array");
     assert_eq!(adapters.len(), 8);
     assert!(
         adapters.iter().all(|adapter| adapter["detected"] == false),
