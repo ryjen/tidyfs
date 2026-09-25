@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ryjen/tidyfs/blob/main/schemas/tidyfs-cli-adapters-v1.schema.json",
+  "title": "TidyFS adapters CLI result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "command", "adapters"],
+  "properties": {
+    "schema": {
+      "const": "tidyfs.cli.adapters/v1"
+    },
+    "command": {
+      "const": "adapters"
+    },
+    "adapters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "detected",
+          "preview_command",
+          "suggested_cleanup_command",
+          "cleanup_executable",
+          "summary"
+        ],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "detected": { "type": "boolean" },
+          "preview_command": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "suggested_cleanup_command": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "cleanup_executable": { "const": false },
+          "summary": { "type": "string" }
+        }
+      }
+    }
+  }
+}
