@@ -34,6 +34,15 @@
               pkgs.rustfmt
             ];
 
+            # Cargo 1.95 acquires a package-cache lock even during the normal
+            # build hook. Nix's default HOME is /proc/nix-build-home, which is
+            # intentionally unwritable, so give Cargo a derivation-local HOME
+            # before buildRustPackage invokes cargoBuildHook.
+            preBuild = ''
+              export HOME="$TMPDIR/home"
+              mkdir -p "$HOME"
+            '';
+
             # Keep Nix on the same deterministic quality surface used by local/CI builds.
             # buildRustPackage supplies Cargo's vendored/offline dependency environment.
             checkPhase = ''
