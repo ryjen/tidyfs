@@ -38,17 +38,21 @@ impl Sandbox {
             .expect("run tidyfs")
     }
 
-    fn run_with_empty_path(&self, args: &[&str]) -> Output {
-        let empty_path = self.root.join("empty-path");
-        fs::create_dir_all(&empty_path).expect("create empty PATH");
+    fn run_with_path(&self, path: &std::path::Path, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_tidyfs"))
             .arg("--db")
             .arg(&self.db_path)
             .args(args)
             .env("HOME", self.root.join("home-not-used"))
-            .env("PATH", &empty_path)
+            .env("PATH", path)
             .output()
-            .expect("run tidyfs with empty PATH")
+            .expect("run tidyfs with controlled PATH")
+    }
+
+    fn run_with_empty_path(&self, args: &[&str]) -> Output {
+        let empty_path = self.root.join("empty-path");
+        fs::create_dir_all(&empty_path).expect("create empty PATH");
+        self.run_with_path(&empty_path, args)
     }
 
     fn connection(&self) -> Connection {
@@ -115,6 +119,36 @@ fn adapters_json_is_versioned_and_does_not_initialize_state() {
     assert_eq!(
         schema["properties"]["adapters"]["items"]["properties"]["cleanup_executable"]["const"],
         false
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn adapters_json_does_not_report_non_executable_path_entries_as_detected() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = Sandbox::new("adapters-non-executable");
+    let path = sandbox.root.join("fake-path");
+    fs::create_dir_all(&path).expect("create controlled PATH");
+    let docker = path.join("docker");
+    fs::write(&docker, b"not executable").expect("write fake docker");
+    let mut permissions = fs::metadata(&docker).expect("stat fake docker").permissions();
+    permissions.set_mode(0o644);
+    fs::set_permissions(&docker, permissions).expect("make fake docker non-executable");
+
+    let output = sandbox.run_with_path(&path, &["adapters", "--format", "json"]);
+    assert_success(&output);
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("adapters output should be JSON");
+    let docker = value["adapters"]
+        .as_array()
+        .expect("adapters should be an array")
+        .iter()
+        .find(|adapter| adapter["name"] == "docker")
+        .expect("docker adapter should be present");
+    assert_eq!(
+        docker["detected"], false,
+        "non-executable PATH entries must not be reported as detected"
     );
 }
 
