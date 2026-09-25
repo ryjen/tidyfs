@@ -520,7 +520,9 @@ fn main() -> Result<()> {
                 clean::run_clean(&database, query)?;
             }
         }
-        Command::Adapters { .. } => unreachable!("adapters is dispatched before database initialization"),
+        Command::Adapters { .. } => {
+            unreachable!("adapters is dispatched before database initialization")
+        }
         Command::Actions { limit } => {
             actions::print_actions(&database, actions::ActionsQuery { limit })?;
         }
