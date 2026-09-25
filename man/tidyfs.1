@@ -102,7 +102,7 @@ Human-oriented text remains the default unless a command documents otherwise. Sc
 .B adapters --format json
 writes one JSON document using schema
 .B tidyfs.cli.adapters/v1
-to standard output. The document contains the command name and the ordered adapter inspection results. This machine format does not initialize or migrate the TidyFS state database. Adapter preview commands may still perform the documented read-only external inspection when their executables are present on PATH.
+to standard output. The document contains the command name and the ordered adapter inspection results. Suggested cleanup commands are labeled as non-executable advice in this schema and do not grant mutation authority. This machine format does not initialize or migrate the TidyFS state database. Adapter preview commands may still perform the documented read-only external inspection when their executables are present on PATH.
 .PP
 Other command output remains pre-1.0 human-oriented text unless explicitly documented as a stable machine contract. Diagnostics and recovery warnings are written to standard error. Commands do not treat piped input or machine-format selection as approval or mutation authority.
 .SH EXIT STATUS
