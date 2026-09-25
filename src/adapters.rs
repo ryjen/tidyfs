@@ -31,7 +31,8 @@ struct AdapterStatusJson {
     name: &'static str,
     detected: bool,
     preview_command: Vec<&'static str>,
-    cleanup_command: Vec<&'static str>,
+    suggested_cleanup_command: Vec<&'static str>,
+    cleanup_executable: bool,
     summary: String,
 }
 
@@ -144,7 +145,8 @@ pub fn render_adapters_json() -> serde_json::Result<String> {
             name: status.name,
             detected: status.detected,
             preview_command: status.preview_command,
-            cleanup_command: status.cleanup_command,
+            suggested_cleanup_command: status.cleanup_command,
+            cleanup_executable: false,
             summary: status.summary,
         })
         .collect();
