@@ -38,6 +38,23 @@ impl Sandbox {
             .expect("run tidyfs")
     }
 
+    fn run_with_path(&self, path: &std::path::Path, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_tidyfs"))
+            .arg("--db")
+            .arg(&self.db_path)
+            .args(args)
+            .env("HOME", self.root.join("home-not-used"))
+            .env("PATH", path)
+            .output()
+            .expect("run tidyfs with controlled PATH")
+    }
+
+    fn run_with_empty_path(&self, args: &[&str]) -> Output {
+        let empty_path = self.root.join("empty-path");
+        fs::create_dir_all(&empty_path).expect("create empty PATH");
+        self.run_with_path(&empty_path, args)
+    }
+
     fn connection(&self) -> Connection {
         Connection::open(&self.db_path).expect("open isolated SQLite database")
     }
@@ -55,6 +72,114 @@ fn assert_success(output: &Output) {
         "command failed\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn adapters_json_is_versioned_and_does_not_initialize_state() {
+    let sandbox = Sandbox::new("adapters-json");
+
+    let output = sandbox.run_with_empty_path(&["adapters", "--format", "json"]);
+    assert_success(&output);
+    assert!(
+        output.stderr.is_empty(),
+        "machine mode wrote diagnostics to stderr"
+    );
+    assert!(
+        !sandbox.db_path.exists(),
+        "read-only adapter inspection initialized the TidyFS database"
+    );
+
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("adapters output should be one JSON document");
+    assert_eq!(value["schema"], "tidyfs.cli.adapters/v1");
+    assert_eq!(value["command"], "adapters");
+
+    let schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../schemas/tidyfs-cli-adapters-v1.schema.json"
+    ))
+    .expect("published adapters schema should be valid JSON");
+    assert_eq!(schema["properties"]["schema"]["const"], value["schema"]);
+    assert_eq!(schema["properties"]["command"]["const"], value["command"]);
+    assert_eq!(schema["additionalProperties"], false);
+    let adapters = value["adapters"]
+        .as_array()
+        .expect("adapters should be an array");
+    assert_eq!(adapters.len(), 8);
+    assert!(
+        adapters.iter().all(|adapter| adapter["detected"] == false),
+        "empty PATH should make every adapter unavailable"
+    );
+    assert!(
+        adapters
+            .iter()
+            .all(|adapter| adapter["cleanup_executable"] == false),
+        "adapter machine output must not imply cleanup execution authority"
+    );
+    assert_eq!(
+        schema["properties"]["adapters"]["items"]["properties"]["cleanup_executable"]["const"],
+        false
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn adapters_json_does_not_report_non_executable_path_entries_as_detected() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = Sandbox::new("adapters-non-executable");
+    let path = sandbox.root.join("fake-path");
+    fs::create_dir_all(&path).expect("create controlled PATH");
+    let docker = path.join("docker");
+    fs::write(&docker, b"not executable").expect("write fake docker");
+    let mut permissions = fs::metadata(&docker)
+        .expect("stat fake docker")
+        .permissions();
+    permissions.set_mode(0o644);
+    fs::set_permissions(&docker, permissions).expect("make fake docker non-executable");
+
+    let output = sandbox.run_with_path(&path, &["adapters", "--format", "json"]);
+    assert_success(&output);
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("adapters output should be JSON");
+    let docker = value["adapters"]
+        .as_array()
+        .expect("adapters should be an array")
+        .iter()
+        .find(|adapter| adapter["name"] == "docker")
+        .expect("docker adapter should be present");
+    assert_eq!(
+        docker["detected"], false,
+        "non-executable PATH entries must not be reported as detected"
+    );
+}
+
+#[test]
+fn adapters_human_output_remains_default_and_read_only() {
+    let sandbox = Sandbox::new("adapters-human");
+
+    let output = sandbox.run_with_empty_path(&["adapters"]);
+    assert_success(&output);
+    assert!(output.stderr.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stdout).starts_with("Adapters:\n"),
+        "default human output changed unexpectedly"
+    );
+    assert!(
+        !sandbox.db_path.exists(),
+        "human adapter inspection initialized the TidyFS database"
+    );
+}
+
+#[test]
+fn machine_format_is_not_accepted_as_cleanup_authority() {
+    let sandbox = Sandbox::new("format-clean");
+
+    let output = sandbox.run(&["clean", "--format", "json"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        !sandbox.db_path.exists(),
+        "usage failure should occur before database initialization"
     );
 }
 

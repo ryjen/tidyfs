@@ -35,6 +35,12 @@ struct Cli {
     command: Command,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliOutputFormat {
+    Human,
+    Json,
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Scan a filesystem tree into the local index and classify known paths.
@@ -256,7 +262,11 @@ enum Command {
     },
 
     /// Inspect available tool-native adapters.
-    Adapters,
+    Adapters {
+        /// Select human-readable or versioned JSON output.
+        #[arg(long, value_enum, default_value_t = CliOutputFormat::Human)]
+        format: CliOutputFormat,
+    },
 
     /// List recorded cleanup/restore actions.
     Actions {
@@ -326,6 +336,18 @@ impl From<CliAiPathMode> for AiPathMode {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Adapter inspection is intentionally independent of persistent TidyFS state.
+    // Dispatch it before database resolution/open/migration so the command remains
+    // read-only with respect to the TidyFS state database.
+    if let Command::Adapters { format } = &cli.command {
+        match format {
+            CliOutputFormat::Human => adapters::print_adapters(),
+            CliOutputFormat::Json => println!("{}", adapters::render_adapters_json()?),
+        }
+        return Ok(());
+    }
+
     let db_path = util::resolve_db_path(cli.db)?;
     let mut database = db::Database::open(&db_path)?;
     database.migrate()?;
@@ -498,8 +520,8 @@ fn main() -> Result<()> {
                 clean::run_clean(&database, query)?;
             }
         }
-        Command::Adapters => {
-            adapters::print_adapters();
+        Command::Adapters { .. } => {
+            unreachable!("adapters is dispatched before database initialization")
         }
         Command::Actions { limit } => {
             actions::print_actions(&database, actions::ActionsQuery { limit })?;
