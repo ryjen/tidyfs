@@ -195,9 +195,12 @@ Adapters inspect tool-owned cleanup domains without giving `tidyfs` external-too
 
 ```bash
 tidyfs adapters
+tidyfs adapters --format json
 tidyfs plan --risk medium --include-adapters
 tidyfs clean --dry-run --risk medium
 ```
+
+The default `adapters` output remains human-oriented. `tidyfs adapters --format json` exposes the first stable CLI machine contract as one `tidyfs.cli.adapters/v1` JSON document. Adapter inspection is dispatched before TidyFS database initialization, so it does not create or migrate local TidyFS state; detected adapters may still run their documented read-only preview commands.
 
 Adapter candidates use:
 
