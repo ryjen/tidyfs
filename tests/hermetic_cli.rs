@@ -90,8 +90,8 @@ fn adapters_json_is_versioned_and_does_not_initialize_state() {
         "read-only adapter inspection initialized the TidyFS database"
     );
 
-    let value: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("adapters output should be one JSON document");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("adapters output should be one JSON document");
     assert_eq!(value["schema"], "tidyfs.cli.adapters/v1");
     assert_eq!(value["command"], "adapters");
 
@@ -132,7 +132,9 @@ fn adapters_json_does_not_report_non_executable_path_entries_as_detected() {
     fs::create_dir_all(&path).expect("create controlled PATH");
     let docker = path.join("docker");
     fs::write(&docker, b"not executable").expect("write fake docker");
-    let mut permissions = fs::metadata(&docker).expect("stat fake docker").permissions();
+    let mut permissions = fs::metadata(&docker)
+        .expect("stat fake docker")
+        .permissions();
     permissions.set_mode(0o644);
     fs::set_permissions(&docker, permissions).expect("make fake docker non-executable");
 
