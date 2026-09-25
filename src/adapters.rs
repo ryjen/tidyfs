@@ -1,4 +1,5 @@
 use crate::rules::{ActionType, Risk};
+use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -23,6 +24,22 @@ pub struct AdapterStatus {
     pub preview_command: Vec<&'static str>,
     pub cleanup_command: Vec<&'static str>,
     pub summary: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AdapterStatusJson {
+    name: &'static str,
+    detected: bool,
+    preview_command: Vec<&'static str>,
+    cleanup_command: Vec<&'static str>,
+    summary: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AdaptersDocument {
+    schema: &'static str,
+    command: &'static str,
+    adapters: Vec<AdapterStatusJson>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -119,6 +136,25 @@ const ADAPTERS: &[AdapterSpec] = &[
         reason: "Go build and test caches are normally regenerable. Module cache cleanup is intentionally not included.",
     },
 ];
+
+pub fn render_adapters_json() -> serde_json::Result<String> {
+    let adapters = inspect_adapters()
+        .into_iter()
+        .map(|status| AdapterStatusJson {
+            name: status.name,
+            detected: status.detected,
+            preview_command: status.preview_command,
+            cleanup_command: status.cleanup_command,
+            summary: status.summary,
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&AdaptersDocument {
+        schema: "tidyfs.cli.adapters/v1",
+        command: "adapters",
+        adapters,
+    })
+}
 
 pub fn print_adapters() {
     println!("Adapters:");
