@@ -98,6 +98,12 @@ fn adapters_json_is_versioned_and_does_not_initialize_state() {
         adapters.iter().all(|adapter| adapter["detected"] == false),
         "empty PATH should make every adapter unavailable"
     );
+    assert!(
+        adapters
+            .iter()
+            .all(|adapter| adapter["cleanup_executable"] == false),
+        "adapter machine output must not imply cleanup execution authority"
+    );
 }
 
 #[test]
