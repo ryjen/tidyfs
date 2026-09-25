@@ -52,6 +52,14 @@
               "$out/bin/tidyfs" --help >/dev/null
               test "$("$out/bin/tidyfs" --version)" = "tidyfs ${cargoToml.package.version}"
               MANPATH="$out/share/man" man -w tidyfs >/dev/null
+
+              # Exercise the installed machine contract with an empty PATH so no
+              # external adapter preview command is invoked. Adapter inspection
+              # must not initialize or migrate the TidyFS state database.
+              mkdir -p "$TMPDIR/tidyfs-empty-path"
+              adapters_json="$(PATH="$TMPDIR/tidyfs-empty-path" "$out/bin/tidyfs" --db "$TMPDIR/tidyfs-adapters.db" adapters --format json)"
+              printf '%s\n' "$adapters_json" | grep -Fq '"schema": "tidyfs.cli.adapters/v1"'
+              test ! -e "$TMPDIR/tidyfs-adapters.db"
             '';
 
             meta = {
