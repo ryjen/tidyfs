@@ -28,6 +28,7 @@
             cargoLock.lockFile = ./Cargo.lock;
 
             nativeBuildInputs = [
+              pkgs.check-jsonschema
               pkgs.clippy
               pkgs.man-db
               pkgs.mise
@@ -66,8 +67,14 @@
               # external adapter preview command is invoked. Adapter inspection
               # must not initialize or migrate the TidyFS state database.
               mkdir -p "$TMPDIR/tidyfs-empty-path"
-              adapters_json="$(PATH="$TMPDIR/tidyfs-empty-path" "$out/bin/tidyfs" --db "$TMPDIR/tidyfs-adapters.db" adapters --format json)"
-              printf '%s\n' "$adapters_json" | grep -Fq '"schema": "tidyfs.cli.adapters/v1"'
+              adapters_json_path="$TMPDIR/tidyfs-adapters.json"
+              PATH="$TMPDIR/tidyfs-empty-path" "$out/bin/tidyfs" \
+                --db "$TMPDIR/tidyfs-adapters.db" adapters --format json \
+                > "$adapters_json_path"
+              check-jsonschema \
+                --schemafile schemas/tidyfs-cli-adapters-v1.schema.json \
+                "$adapters_json_path"
+              grep -Fq '"schema": "tidyfs.cli.adapters/v1"' "$adapters_json_path"
               test ! -e "$TMPDIR/tidyfs-adapters.db"
             '';
 
