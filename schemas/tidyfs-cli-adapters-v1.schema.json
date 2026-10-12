@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ryjen/tidyfs/blob/main/schemas/tidyfs-cli-adapters-v1.schema.json",
+  "$id": "urn:tidyfs:cli:adapters:v1",
   "title": "TidyFS adapters CLI result v1",
   "type": "object",
   "additionalProperties": false,
