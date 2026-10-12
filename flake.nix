@@ -28,11 +28,21 @@
             cargoLock.lockFile = ./Cargo.lock;
 
             nativeBuildInputs = [
+              pkgs.check-jsonschema
               pkgs.clippy
               pkgs.man-db
               pkgs.mise
               pkgs.rustfmt
             ];
+
+            # Cargo 1.95 acquires a package-cache lock even during the normal
+            # build hook. Nix's default HOME is /proc/nix-build-home, which is
+            # intentionally unwritable, so give Cargo a derivation-local HOME
+            # before buildRustPackage invokes cargoBuildHook.
+            preBuild = ''
+              export HOME="$TMPDIR/home"
+              mkdir -p "$HOME"
+            '';
 
             # Keep Nix on the same deterministic quality surface used by local/CI builds.
             # buildRustPackage supplies Cargo's vendored/offline dependency environment.
@@ -52,6 +62,20 @@
               "$out/bin/tidyfs" --help >/dev/null
               test "$("$out/bin/tidyfs" --version)" = "tidyfs ${cargoToml.package.version}"
               MANPATH="$out/share/man" man -w tidyfs >/dev/null
+
+              # Exercise the installed machine contract with an empty PATH so no
+              # external adapter preview command is invoked. Adapter inspection
+              # must not initialize or migrate the TidyFS state database.
+              mkdir -p "$TMPDIR/tidyfs-empty-path"
+              adapters_json_path="$TMPDIR/tidyfs-adapters.json"
+              PATH="$TMPDIR/tidyfs-empty-path" "$out/bin/tidyfs" \
+                --db "$TMPDIR/tidyfs-adapters.db" adapters --format json \
+                > "$adapters_json_path"
+              check-jsonschema \
+                --schemafile schemas/tidyfs-cli-adapters-v1.schema.json \
+                "$adapters_json_path"
+              grep -Fq '"schema": "tidyfs.cli.adapters/v1"' "$adapters_json_path"
+              test ! -e "$TMPDIR/tidyfs-adapters.db"
             '';
 
             meta = {
