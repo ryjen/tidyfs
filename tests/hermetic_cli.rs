@@ -99,6 +99,7 @@ fn adapters_json_is_versioned_and_does_not_initialize_state() {
         "../schemas/tidyfs-cli-adapters-v1.schema.json"
     ))
     .expect("published adapters schema should be valid JSON");
+    assert_eq!(schema["$id"], "urn:tidyfs:cli:adapters:v1");
     assert_eq!(schema["properties"]["schema"]["const"], value["schema"]);
     assert_eq!(schema["properties"]["command"]["const"], value["command"]);
     assert_eq!(schema["additionalProperties"], false);
