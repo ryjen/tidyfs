@@ -109,13 +109,22 @@ jobs:
           set -euo pipefail
           ref="github:ryjen/tidyfs/${GITHUB_SHA}?dir=distribution"
           metadata="$(nix flake metadata --json --no-write-lock-file "$ref")"
-          printf '%s\n' "$metadata" | python3 -c '
-          import json, sys
-          data = json.load(sys.stdin)
+          export TIDYFS_REMOTE_METADATA="$metadata"
+          python3 - <<'PY'
+          import json
+          import os
+
+          data = json.loads(os.environ["TIDYFS_REMOTE_METADATA"])
           locked = data.get("locked", {})
           original = data.get("original", {})
-          if locked.get("rev") != "'"$GITHUB_SHA"'":
-              raise SystemExit(f"remote flake resolved unexpected rev: {locked.get('rev')!r}")
-          print("REMOTE_FLAKE_LOCK=" + json.dumps({"locked": locked, "original": original}, sort_keys=True))
-          '
+          expected = os.environ["GITHUB_SHA"]
+          if locked.get("rev") != expected:
+              raise SystemExit(
+                  f"remote flake resolved unexpected rev: {locked.get('rev')!r} != {expected!r}"
+              )
+          print(
+              "REMOTE_FLAKE_LOCK="
+              + json.dumps({"locked": locked, "original": original}, sort_keys=True)
+          )
+          PY
           nix build "$ref#tidyfs" --no-link --print-build-logs
