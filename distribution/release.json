@@ -1,0 +1,11 @@
+{
+  "version": "0.7.0",
+  "canonical_repository": "ryjen/tidyfs",
+  "canonical_tag": "v0.7.0",
+  "canonical_commit": "4ce8406a903ded92fcc3126933ac64aab700d626",
+  "target": "x86_64-unknown-linux-musl",
+  "artifact": "tidyfs-0.7.0-x86_64-unknown-linux-musl.tar.gz",
+  "sha256": "fe818f3e609185e8af9dc9fd21f41e132fd42907168255c146c21dd73cd60bf9",
+  "nix_hash": "sha256-/oGPPmCRheivncn9IfQeEy/UKQcWglXBRsId1zzWC/k=",
+  "source_url": "https://github.com/ryjen/tidyfs/releases/download/v0.7.0/tidyfs-0.7.0-x86_64-unknown-linux-musl.tar.gz"
+}
