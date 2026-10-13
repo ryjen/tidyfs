@@ -31,6 +31,9 @@
             version = release.version;
             src = archive;
             dontUnpack = true;
+            # Preserve the qualified release executable byte-for-byte. The standard
+            # fixup phase otherwise strips eligible ELF binaries after install.
+            dontStrip = true;
 
             nativeBuildInputs = [ pkgs.gnutar pkgs.gzip pkgs.man-db ];
 
