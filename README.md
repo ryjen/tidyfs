@@ -335,6 +335,14 @@ Linux CI, fuzzing, and release jobs use the exact `runner-tidyfs` JIT runner rou
 
 `Cargo.toml` is the package/version source of truth. The Linux release workflow verifies the tag/version relationship, builds with locked dependencies, produces deterministic archive contents, generates a SHA-256 checksum, and separates read-only build work from release publication authority.
 
+For binary-oriented Nix consumption, `distribution/` contains a subflake that fetches the immutable GitHub release asset by cryptographic hash rather than rebuilding the current source tree. This replaces the former separate `ryjen/tidyfs-community` repository while preserving exact release-byte pinning.
+
+Consumers should pin an exact reviewed repository commit, for example:
+
+```nix
+tidyfs.url = "github:ryjen/tidyfs/<commit>?dir=distribution";
+```
+
 Signing/SLSA-style provenance, additional binary targets, and any crates.io publication policy remain separate distribution decisions.
 
 ## Documentation
