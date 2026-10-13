@@ -1,0 +1,98 @@
+name: Binary distribution
+
+on:
+  pull_request:
+    paths:
+      - distribution/**
+      - .github/workflows/distribution.yml
+  push:
+    branches: [main]
+    paths:
+      - distribution/**
+      - .github/workflows/distribution.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: Qualify immutable release flake
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+        with:
+          nix_path: nixpkgs=channel:nixos-26.05
+
+      - name: Verify distribution metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('distribution/release.json').read_text())
+          expected = {
+              'version': '0.7.0',
+              'canonical_repository': 'ryjen/tidyfs',
+              'canonical_tag': 'v0.7.0',
+              'canonical_commit': '4ce8406a903ded92fcc3126933ac64aab700d626',
+              'target': 'x86_64-unknown-linux-musl',
+              'artifact': 'tidyfs-0.7.0-x86_64-unknown-linux-musl.tar.gz',
+              'sha256': 'fe818f3e609185e8af9dc9fd21f41e132fd42907168255c146c21dd73cd60bf9',
+          }
+          for key, value in expected.items():
+              if data.get(key) != value:
+                  raise SystemExit(f'{key} mismatch: {data.get(key)!r} != {value!r}')
+
+          prefix = 'https://github.com/ryjen/tidyfs/releases/download/v0.7.0/'
+          if not data.get('source_url', '').startswith(prefix):
+              raise SystemExit('source_url is not the canonical immutable release')
+
+          sri = 'sha256-' + base64.b64encode(bytes.fromhex(data['sha256'])).decode()
+          if data.get('nix_hash') != sri:
+              raise SystemExit(f'nix_hash mismatch: {data.get("nix_hash")!r} != {sri!r}')
+          PY
+
+      - name: Verify release bytes directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact="$(python3 -c 'import json; print(json.load(open("distribution/release.json"))["artifact"])')"
+          expected="$(python3 -c 'import json; print(json.load(open("distribution/release.json"))["sha256"])')"
+          url="$(python3 -c 'import json; print(json.load(open("distribution/release.json"))["source_url"])')"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 5 --output "$artifact" "$url"
+          computed="$(sha256sum "$artifact" | awk '{print $1}')"
+          test "$computed" = "$expected"
+
+      - name: Check binary distribution flake
+        run: nix flake check ./distribution --no-write-lock-file --print-build-logs
+
+      - name: Build and smoke-test binary package
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix build ./distribution#tidyfs --no-link --print-build-logs
+          nix run ./distribution# -- --version | grep -Fx 'tidyfs 0.7.0'
+          nix run ./distribution# -- --help >/dev/null
+          out="$(nix build ./distribution#tidyfs --no-link --print-out-paths)"
+          test -x "$out/bin/tidyfs"
+          test -n "$(find "$out/share/man/man1" -maxdepth 1 -type f -name 'tidyfs.1*' -print -quit)"
+
+      - name: Prove package fetches canonical release bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          drv="$(nix derivation show -r ./distribution#tidyfs)"
+          printf '%s' "$drv" | grep -F 'github.com/ryjen/tidyfs/releases/download/' >/dev/null
+          if printf '%s' "$drv" | grep -F 'github.com/ryjen/tidyfs-community/' >/dev/null; then
+            echo 'legacy community repository leaked into distribution derivation' >&2
+            exit 1
+          fi
