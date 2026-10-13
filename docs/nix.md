@@ -2,7 +2,7 @@
 
 `tidyfs` owns a standalone canonical flake. It has no dependency on Dubnium, private host configuration, credentials, or external local source paths.
 
-This flake is the implementation repository's build, test, and release-qualification contract. Under the Micrantha private-canonical/public-binary distribution strategy, it is **not** the intended long-term public downstream installation surface after the binary community flake is available.
+The root flake is the source repository's build, test, and release-qualification contract. A separate `distribution/` subflake in this same public repository is the binary-oriented downstream installation surface; it fetches immutable release bytes rather than rebuilding the source tree.
 
 The committed `flake.lock` pins an independent `nixpkgs` input. Canonical build/release work may deliberately compose it with another pinned `nixpkgs`, but that does not transfer product-version authority to a downstream repository.
 
@@ -111,26 +111,25 @@ nix fmt
 
 `formatter.${system}` uses `nixfmt-rfc-style` for Nix source formatting. Rust formatting remains part of `mise run static-analysis` / `mise run ci` through the existing `scripts/static-analysis.sh` path.
 
-## Public distribution boundary
+## Public binary distribution
 
-The target public installation path is tracked by #82:
+The public installation path is tracked by #82:
 
 ```text
-canonical source + reviewed vX.Y.Z commit/tag
-  -> deterministic binary release archive + checksum evidence
-  -> public ryjen/tidyfs-community
-       -> binary-oriented flake with pinned artifact hash
+public source + reviewed vX.Y.Z commit/tag
+  -> deterministic immutable release archive + checksum evidence
+  -> distribution/ binary flake with pinned artifact hash
   -> downstream committed flake.lock
 ```
 
-The community flake must fetch an immutable authorized release artifact rather than compile exported tidyfs implementation source. It must install the same executable and section-1 manual, verify the reported release identity, and require no canonical-source credential during normal evaluation/build.
+The `distribution/` flake fetches the immutable authorized release asset from `ryjen/tidyfs`; it does not compile the current source tree. It installs the same executable and section-1 manual and verifies the release bytes with the pinned Nix hash.
 
-The canonical release commit is the source/release execution identity; the immutable `vX.Y.Z` tag is its human-readable label. The community repository has its own immutable packaging commit, but it must bind to the canonical release version, source identity, and artifact digest rather than create a second product-version authority.
+The canonical release commit is the source/release execution identity and the immutable `vX.Y.Z` tag is its human-readable label. The distribution metadata binds to that release identity and digest; it is not a second product-version authority.
 
-High-assurance consumers such as Dubnium should pin the exact reviewed **public distribution** commit and commit the resulting lock state. If dotfiles also declares the tidyfs distribution input, the composed host should make that input follow its single top-level tidyfs distribution pin.
+High-assurance consumers such as Dubnium should pin an exact reviewed `ryjen/tidyfs` commit with `?dir=distribution` and commit the resulting lock state. If dotfiles also declares the tidyfs distribution input, the composed host should make that input follow its single top-level tidyfs distribution pin.
 
-## Existing public history
+## Repository visibility
 
-The canonical repository has previously been public. Moving to a binary-oriented public distribution path protects future implementation evolution only; it does not revoke or erase prior source disclosure. Do not change source visibility until the replacement public binary path has been independently validated from a clean consumer.
+`ryjen/tidyfs` remains public. Source privacy is not part of the authorization model, the implementation has already been publicly disclosed, and the runtime/security design assumes attacker knowledge of the code. Keeping a separate binary-only repository therefore adds coordination cost without a meaningful security boundary.
 
 Tidyfs itself does not import Dubnium modules, paths, credentials, runner state, or host policy. Any future `dubctl tidy` integration remains a separate downstream boundary and does not widen tidyfs filesystem authority.
