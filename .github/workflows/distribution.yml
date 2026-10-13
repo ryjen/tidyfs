@@ -102,3 +102,20 @@ jobs:
             echo 'legacy community repository leaked into distribution derivation' >&2
             exit 1
           fi
+
+      - name: Qualify exact public GitHub subflake URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="github:ryjen/tidyfs/${GITHUB_SHA}?dir=distribution"
+          metadata="$(nix flake metadata --json --no-write-lock-file "$ref")"
+          printf '%s\n' "$metadata" | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)
+          locked = data.get("locked", {})
+          original = data.get("original", {})
+          if locked.get("rev") != "'"$GITHUB_SHA"'":
+              raise SystemExit(f"remote flake resolved unexpected rev: {locked.get('rev')!r}")
+          print("REMOTE_FLAKE_LOCK=" + json.dumps({"locked": locked, "original": original}, sort_keys=True))
+          '
+          nix build "$ref#tidyfs" --no-link --print-build-logs
