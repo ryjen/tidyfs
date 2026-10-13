@@ -86,6 +86,12 @@ jobs:
           test -x "$out/bin/tidyfs"
           test -n "$(find "$out/share/man/man1" -maxdepth 1 -type f -name 'tidyfs.1*' -print -quit)"
 
+          artifact="$(python3 -c 'import json; print(json.load(open("distribution/release.json"))["artifact"])')"
+          bundle="${artifact%.tar.gz}"
+          extracted="$(mktemp -d)"
+          tar -xzf "$artifact" -C "$extracted"
+          cmp "$extracted/$bundle/bin/tidyfs" "$out/bin/tidyfs"
+
       - name: Prove package fetches canonical release bytes
         shell: bash
         run: |
