@@ -49,7 +49,7 @@ Responsibilities:
 - locate config, rules, and SQLite DB
 - present errors clearly
 
-Initial commands:
+Representative commands:
 
 ```bash
 tidyfs scan ~
@@ -157,22 +157,20 @@ Examples:
 
 Executes only already validated and approved candidates.
 
-Initial execution mode:
+Current execution contract:
 
-- dry-run only
+- `clean --dry-run` previews without mutating filesystem state;
+- real cleanup requires `clean --safe --interactive`, deterministic eligibility, and explicit operator approval;
+- eligible payloads move to reversible same-filesystem quarantine, never permanent deletion;
+- source and moved-payload identity checks constrain stale-path and substitution risks;
+- transitional actions are recorded durably so interrupted moves can be reconciled by `recover`;
+- `restore` is a separate explicit action, serialized with cleanup/recovery mutation flows.
 
-Later execution mode:
-
-- move to trash
-- move to quarantine
-- write manifest
-- support restore
-
-No permanent deletion in MVP.
+A non-cooperating writer can still race a final pathname check and rename. A post-move identity mismatch is detected rather than treated as successful cleanup; see [recovery](recovery.md).
 
 ### Adapters
 
-Adapters inspect and optionally run tool-native cleanup commands.
+Adapters inspect tool-owned cleanup domains using allowlisted, read-only preview commands. Suggested cleanup commands are **data**, not executable authority. Tool-native candidates cannot be executed by the quarantine executor.
 
 Examples:
 
@@ -186,7 +184,7 @@ Examples:
 - Go
 - Cargo
 
-Adapters must use allowlisted commands only.
+Executable tool-native cleanup is deferred pending a separate command-authority, recovery, and security design. `adapters --format json` exposes a versioned, read-only machine contract.
 
 ### AI explainer
 
@@ -198,7 +196,7 @@ AI can:
 - rank existing candidates
 - explain risk/tradeoffs
 - summarize cleanup plans
-- draft disabled rule proposals
+- select among supplied, already-eligible goal candidate IDs
 
 AI cannot:
 
@@ -240,11 +238,18 @@ sequenceDiagram
     User->>CLI: tidyfs clean --dry-run
     CLI->>Executor: preview validated actions
     Executor-->>CLI: dry-run report
+
+    opt explicit mutation approval
+      User->>CLI: tidyfs clean --safe --interactive
+      CLI->>Executor: revalidate source and policy
+      Executor->>DB: persist transitional action state
+      Executor-->>CLI: reversible quarantine result
+    end
 ```
 
 ## Storage model
 
-Core tables:
+The following tables illustrate the original conceptual schema, **not a current migration contract**. The live schema and action-state migrations in source are authoritative. Core conceptual tables:
 
 ```sql
 CREATE TABLE scans (
