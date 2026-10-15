@@ -50,7 +50,7 @@ jobs:
     runs-on: runner-tidyfs
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
           fetch-depth: 0
@@ -196,7 +196,7 @@ jobs:
       # Deliberately source-free: this job consumes only the verified artifact handoff
       # from the read-only verify job and the scoped GitHub release API.
       - name: Verify handed-off checksum and publish GitHub release
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ github.token }}
           script: |
