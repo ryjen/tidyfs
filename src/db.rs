@@ -274,3 +274,138 @@ fn ensure_action_column(connection: &Connection, column: &str, definition: &str)
     }
     Ok(())
 }
+
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const LEGACY_ACTION_ID: i64 = 17;
+    const INTERRUPTED_ACTION_ID: i64 = 18;
+    const LEGACY_TIMESTAMP: i64 = 123;
+    const LEGACY_PAYLOAD_SIZE: i64 = 4096;
+    const LEGACY_ORIGINAL_PATH: &str = "/testule/legacy-payload";
+    const LEGACY_QUARANTINE_PATH: &str = "/testule/legacy-quarantine";
+    const LEGACY_ACTION_TYPE: &str = "quarantine";
+    const QUARANTINED_STATUS: &str = "quarantined";
+    const INTERRUPTED_STATUS: &str = "running";
+    const RECOVERY_STATUS: &str = "moving";
+    const INTEGRITY_OK: &str = "ok";
+
+    // The pre-identity schema deliberately omits payload_sha256 and identity_version.
+    const LEGACY_ACTIONS_SCHEMA: &str = r#"
+        CREATE TABLE actions (
+            id INTEGER PRIMARY KEY,
+            timestamp INTEGER NOT NULL,
+            scan_id INTEGER,
+            candidate_id INTEGER,
+            original_path TEXT NOT NULL,
+            quarantine_path TEXT,
+            action_type TEXT NOT NULL,
+            size_bytes INTEGER,
+            rule_id TEXT,
+            risk TEXT,
+            status TEXT NOT NULL,
+            error TEXT,
+            restored_at INTEGER,
+            restore_error TEXT
+        );
+    "#;
+
+    struct TemporaryLegacyStore(PathBuf);
+
+    impl Drop for TemporaryLegacyStore {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn legacy_action_schema_upgrades_without_losing_history() -> Result<()> {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "tidyfs-sqlite-legacy-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root)?;
+        let temporary = TemporaryLegacyStore(root);
+        let database_path = temporary.0.join("state.db");
+
+        // Seed an existing on-disk database using the previous actions schema.
+        {
+            let connection = Connection::open(&database_path)?;
+            connection.execute_batch(LEGACY_ACTIONS_SCHEMA)?;
+            connection.execute(
+                "INSERT INTO actions
+                    (id, timestamp, original_path, quarantine_path,
+                     action_type, size_bytes, status)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    LEGACY_ACTION_ID,
+                    LEGACY_TIMESTAMP,
+                    LEGACY_ORIGINAL_PATH,
+                    LEGACY_QUARANTINE_PATH,
+                    LEGACY_ACTION_TYPE,
+                    LEGACY_PAYLOAD_SIZE,
+                    QUARANTINED_STATUS,
+                ],
+            )?;
+            connection.execute(
+                "INSERT INTO actions
+                    (id, timestamp, original_path, action_type, status)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    INTERRUPTED_ACTION_ID,
+                    LEGACY_TIMESTAMP,
+                    LEGACY_ORIGINAL_PATH,
+                    LEGACY_ACTION_TYPE,
+                    INTERRUPTED_STATUS,
+                ],
+            )?;
+        }
+
+        let database = Database::open(&database_path)?;
+        database.migrate()?;
+        // A second invocation must neither discard records nor duplicate columns.
+        database.migrate()?;
+        drop(database);
+
+        // Reopen from disk to exercise persisted WAL/schema compatibility, not
+        // just an in-memory statement or newly initialized database.
+        let reopened = Database::open(&database_path)?;
+        let (path, quarantined_path, action, size, status, digest, identity):
+            (String, String, String, i64, String, Option<String>, Option<String>) =
+            reopened.connection().query_row(
+                "SELECT original_path, quarantine_path, action_type, size_bytes,
+                        status, payload_sha256, identity_version
+                 FROM actions WHERE id = ?1",
+                params![LEGACY_ACTION_ID],
+                |row| {
+                    Ok((
+                        row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
+                        row.get(4)?, row.get(5)?, row.get(6)?,
+                    ))
+                },
+            )?;
+        assert_eq!(path, LEGACY_ORIGINAL_PATH);
+        assert_eq!(quarantined_path, LEGACY_QUARANTINE_PATH);
+        assert_eq!(action, LEGACY_ACTION_TYPE);
+        assert_eq!(size, LEGACY_PAYLOAD_SIZE);
+        assert_eq!(status, QUARANTINED_STATUS);
+        assert_eq!(digest, None);
+        assert_eq!(identity, None);
+
+        let interrupted_status: String = reopened.connection().query_row(
+            "SELECT status FROM actions WHERE id = ?1",
+            params![INTERRUPTED_ACTION_ID],
+            |row| row.get(0),
+        )?;
+        assert_eq!(interrupted_status, RECOVERY_STATUS);
+
+        let integrity: String =
+            reopened.connection().query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        assert_eq!(integrity, INTEGRITY_OK);
+        Ok(())
+    }
+}
