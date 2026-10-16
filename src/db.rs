@@ -285,8 +285,8 @@ mod migration_tests {
     const INTERRUPTED_ACTION_ID: i64 = 18;
     const LEGACY_TIMESTAMP: i64 = 123;
     const LEGACY_PAYLOAD_SIZE: i64 = 4096;
-    const LEGACY_ORIGINAL_PATH: &str = "/testule/legacy-payload";
-    const LEGACY_QUARANTINE_PATH: &str = "/testule/legacy-quarantine";
+    const LEGACY_ORIGINAL_PATH: &str = "/fixture/legacy-payload";
+    const LEGACY_QUARANTINE_PATH: &str = "/fixture/legacy-quarantine";
     const LEGACY_ACTION_TYPE: &str = "quarantine";
     const QUARANTINED_STATUS: &str = "quarantined";
     const INTERRUPTED_STATUS: &str = "running";
