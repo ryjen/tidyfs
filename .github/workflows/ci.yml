@@ -47,6 +47,10 @@ jobs:
       - name: Verify Cargo package
         run: nix develop --command bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; cargo package --locked'
 
+      - name: Clean worktree-local Cargo outputs
+        if: ${{ always() }}
+        run: nix develop --command bash scripts/clean-cargo-build.sh root
+
   audit:
     name: Dependency audit
     runs-on: runner-tidyfs
@@ -98,6 +102,10 @@ jobs:
                 -rss_limit_mb=2048
             done
           '
+
+      - name: Clean worktree-local fuzz builds (retain corpora and artifacts)
+        if: ${{ always() }}
+        run: nix develop --command bash scripts/clean-cargo-build.sh fuzz
 
   nix-flake:
     name: Nix flake
