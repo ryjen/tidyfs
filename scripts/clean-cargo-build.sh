@@ -6,10 +6,12 @@ case "${1:-root}" in
   root)
     target="$root/target"
     manifest="$root/Cargo.toml"
+    package_args=(--package tidyfs)
     ;;
   fuzz)
     target="$root/fuzz/target"
     manifest="$root/fuzz/Cargo.toml"
+    package_args=()
     ;;
   *)
     echo "usage: $0 [root|fuzz]" >&2
@@ -28,4 +30,4 @@ if [[ ! -d "$target" ]]; then
   echo "refusing unexpected non-directory Cargo target: $target" >&2
   exit 2
 fi
-cargo clean --manifest-path "$manifest" --target-dir "$target"
+cargo clean --manifest-path "$manifest" --target-dir "$target" "${package_args[@]}"

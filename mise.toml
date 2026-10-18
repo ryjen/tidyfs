@@ -7,7 +7,7 @@ description = "Run the full deterministic test suite"
 run = "cargo test --all-targets --all-features --locked"
 
 [tasks.clean]
-description = "Clean this worktree's ordinary Cargo target after retaining logs and artifacts"
+description = "Clean this worktree's tidyfs package outputs without evicting dependency caches"
 run = "bash scripts/clean-cargo-build.sh root"
 
 [tasks.fuzz-clean]

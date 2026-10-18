@@ -332,7 +332,7 @@ bash scripts/clean-cargo-build.sh root    # ordinary Cargo target/
 bash scripts/clean-cargo-build.sh fuzz    # fuzz/target/ (only after fuzz evidence is retained)
 ```
 
-The cleanup script delegates to `cargo clean` with an explicit target directory and refuses symlinked targets. It is idempotent when no task-local target exists. It does not remove `fuzz/corpus/`, `fuzz/artifacts/`, shared Cargo caches, other worktrees, or immutable Nix store results. A nonstandard `CARGO_TARGET_DIR` must be reviewed and cleaned separately by its owner; this script never follows that variable into a shared path.
+The cleanup script delegates to `cargo clean` with an explicit target directory and refuses symlinked targets. Ordinary cleanup removes **the `tidyfs` package build outputs**, while leaving reusable dependency artifacts available for the existing Rust CI cache; fuzz cleanup uses its separate target directory. It is idempotent when no task-local target exists. It does not remove `fuzz/corpus/`, `fuzz/artifacts/`, shared Cargo caches, other worktrees, or immutable Nix store results. A nonstandard `CARGO_TARGET_DIR` must be reviewed and cleaned separately by its owner; this script never follows that variable into a shared path.
 
 For interactive sequences use an `EXIT` trap or equivalent finalizer, and preserve the original test/build result independently from any cleanup failure. A build/test that feeds packaging or other verification must **not** be cleaned until those consumers finish. The CI quality and fuzz jobs attempt cleanup as their final step after test/package or fuzz-artifact handling. Nix's package derivation retains the existing `mise run ci` contract because cleaning during its build/check phases would be premature.
 
