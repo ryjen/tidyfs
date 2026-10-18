@@ -6,6 +6,14 @@ run = "bash scripts/static-analysis.sh"
 description = "Run the full deterministic test suite"
 run = "cargo test --all-targets --all-features --locked"
 
+[tasks.clean]
+description = "Clean this worktree's ordinary Cargo target after retaining logs and artifacts"
+run = "bash scripts/clean-cargo-build.sh root"
+
+[tasks.fuzz-clean]
+description = "Clean this worktree's fuzz build target, preserving corpora and crash artifacts"
+run = "bash scripts/clean-cargo-build.sh fuzz"
+
 [tasks.audit]
 description = "Audit dependencies with RustSec"
 run = "cargo audit"
