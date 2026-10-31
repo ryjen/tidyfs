@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tidyfs:cli:top:v1",
+  "title": "TidyFS top CLI result v1",
+  "description": "Read-only directory aggregation over an existing completed scan. This report carries no cleanup authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "command",
+    "scan_id",
+    "scan_root",
+    "filter_root",
+    "rows"
+  ],
+  "properties": {
+    "schema": {
+      "const": "tidyfs.cli.top/v1"
+    },
+    "command": {
+      "const": "top"
+    },
+    "scan_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "scan_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "filter_root": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "allocated_size_bytes",
+          "total_size_bytes",
+          "file_count",
+          "dir_count",
+          "symlink_count"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "allocated_size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "file_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "dir_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "symlink_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}
