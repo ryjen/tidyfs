@@ -128,6 +128,10 @@ enum Command {
         /// Restrict output to a subtree.
         #[arg(long)]
         root: Option<PathBuf>,
+
+        /// Human-readable output (default), or versioned read-only JSON.
+        #[arg(long, value_enum, default_value_t = CliOutputFormat::Human)]
+        format: CliOutputFormat,
     },
 
     /// Explain what a path appears to be using deterministic classifications and stored AI evidence.
@@ -419,6 +423,7 @@ fn main() -> Result<()> {
             limit,
             depth,
             root,
+            format,
         } => {
             let query = top::TopQuery {
                 scan_id,
@@ -426,7 +431,7 @@ fn main() -> Result<()> {
                 depth,
                 root,
             };
-            top::print_top(&database, query)?;
+            top::print_top(&database, query, matches!(format, CliOutputFormat::Json))?;
         }
         Command::Explain {
             path,
