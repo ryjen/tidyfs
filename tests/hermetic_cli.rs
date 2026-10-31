@@ -185,6 +185,72 @@ fn machine_format_is_not_accepted_as_cleanup_authority() {
 }
 
 #[test]
+fn top_json_is_a_versioned_read_only_report_over_an_existing_scan() {
+    let sandbox = Sandbox::new("top-json");
+    let project = sandbox.scan_root.join("project");
+    let artifact = project.join("target/artifact.bin");
+    fs::create_dir_all(artifact.parent().expect("fixture parent"))
+        .expect("create fixture directories");
+    fs::write(&artifact, b"safe-test-data").expect("write isolated fixture");
+    let before = fs::read(&artifact).expect("read fixture");
+
+    assert_success(&sandbox.run(&["scan", sandbox.scan_root.to_str().expect("UTF-8 path")]));
+
+    let output = sandbox.run(&[
+        "top",
+        "--format",
+        "json",
+        "--limit",
+        "5",
+        "--depth",
+        "1",
+        "--root",
+        project.to_str().expect("UTF-8 fixture"),
+    ]);
+    assert_success(&output);
+    assert!(output.stderr.is_empty(), "JSON mode emitted diagnostics");
+
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document on stdout");
+    assert_eq!(value["schema"], "tidyfs.cli.top/v1");
+    assert_eq!(value["command"], "top");
+    assert!(value["scan_id"].as_i64().unwrap_or(0) > 0);
+    assert_eq!(value["scan_root"], sandbox.scan_root.to_str().unwrap());
+    assert_eq!(value["filter_root"], project.to_str().unwrap());
+
+    let rows = value["rows"].as_array().expect("rows array");
+    assert_eq!(rows.len(), 1, "root/depth filters should restrict results");
+    assert_eq!(rows[0]["path"], project.to_str().unwrap());
+    assert!(rows[0]["allocated_size_bytes"].as_u64().is_some());
+    assert!(rows[0]["total_size_bytes"].as_u64().is_some());
+    assert!(rows[0]["file_count"].as_u64().is_some());
+
+    let schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../schemas/tidyfs-cli-top-v1.schema.json"
+    ))
+    .expect("published top schema must be valid JSON");
+    assert_eq!(schema["$id"], "urn:tidyfs:cli:top:v1");
+    assert_eq!(schema["properties"]["schema"]["const"], value["schema"]);
+    assert_eq!(schema["properties"]["command"]["const"], value["command"]);
+    assert_eq!(schema["additionalProperties"], false);
+    assert_eq!(schema["properties"]["rows"]["items"]["additionalProperties"], false);
+
+    assert_eq!(fs::read(&artifact).expect("read after top"), before);
+    let actions: i64 = sandbox
+        .connection()
+        .query_row("SELECT COUNT(*) FROM actions", [], |row| row.get(0))
+        .expect("query action records");
+    assert_eq!(actions, 0, "machine report must not create cleanup actions");
+
+    let human = sandbox.run(&["top", "--limit", "5"]);
+    assert_success(&human);
+    assert!(
+        String::from_utf8_lossy(&human.stdout).starts_with("scan_id: "),
+        "human output changed for default top"
+    );
+}
+
+#[test]
 fn scan_indexes_only_the_isolated_tree_and_database() {
     let sandbox = Sandbox::new("scan");
     let project = sandbox.scan_root.join("project");
