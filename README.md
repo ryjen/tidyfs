@@ -202,6 +202,15 @@ tidyfs clean --dry-run --risk medium
 
 The default `adapters` output remains human-oriented. `tidyfs adapters --format json` exposes the first stable CLI machine contract as one `tidyfs.cli.adapters/v1` JSON document. Adapter inspection is dispatched before TidyFS database initialization, so it does not create or migrate local TidyFS state; detected adapters may still run their documented read-only preview commands. Machine results expose cleanup commands only as `suggested_cleanup_command` and explicitly report `cleanup_executable: false`; the JSON contract does not grant execution authority. `detected: true` means the existing read-only preview command was actually spawnable in the invocation environment, not merely that a same-named PATH entry existed.
 
+The read-only `top` command also supports a separately versioned JSON report on the current development branch:
+
+```bash
+tidyfs scan ~/src
+tidyfs top --format json --limit 20 --depth 2
+```
+
+`tidyfs top --format json` emits exactly one `tidyfs.cli.top/v1` document with the selected scan identity and root, optional filter root, and directory rows. Byte counts are exact integers; human-friendly units are confined to the default text output. JSON formatting does not grant cleanup authority, execute actions, or modify indexed filesystem facts. Its source schema is [`schemas/tidyfs-cli-top-v1.schema.json`](schemas/tidyfs-cli-top-v1.schema.json). Binary consumers must not assume this **unreleased** contract exists in the immutable v0.7.0 artifact; public schema packaging is a separate release requirement tracked in #81.
+
 The machine-readable contract is published as [`schemas/tidyfs-cli-adapters-v1.schema.json`](schemas/tidyfs-cli-adapters-v1.schema.json). Additive or breaking changes to that contract must follow its versioning rather than relying on incidental human output.
 
 Adapter candidates use:

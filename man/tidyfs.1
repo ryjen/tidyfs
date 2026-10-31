@@ -50,7 +50,11 @@ Send a bounded metadata view of classified facts to an explicitly selected numer
 Optional controls include scan/root selection, risk ceiling, path disclosure mode, response-size bound, and connection/read timeouts.
 .TP
 .B top
-Show the largest indexed directories. Optional controls include scan id, limit, relative depth, and subtree root.
+Show the largest indexed directories. Optional controls include scan id, limit, relative depth, and subtree root. Use
+.B --format human
+for the default text report or
+.B --format json
+for a versioned read-only machine document.
 .TP
 .BI explain " PATH"
 Explain a path from deterministic classifications and stored advisory AI evidence. Stored evidence is revalidated for freshness before use.
@@ -104,8 +108,16 @@ writes one JSON document using schema
 .B tidyfs.cli.adapters/v1
 to standard output. The document contains the command name and the ordered adapter inspection results. Suggested cleanup commands are labeled as non-executable advice in this schema and do not grant mutation authority. This machine format does not initialize or migrate the TidyFS state database. Adapter preview commands may still perform the documented read-only external inspection when their executables are present on PATH.
 .PP
-The source distribution publishes the machine-readable contract as
+The source distribution publishes the adapters machine contract as
 .I schemas/tidyfs-cli-adapters-v1.schema.json .
+.PP
+.B top --format json
+writes one
+.B tidyfs.cli.top/v1
+document with the scan id/root, optional filter root, and bounded directory rows. Size fields are unsigned integer bytes, not formatted text; this mode uses existing indexed facts and does not write cleanup actions. The source schema is
+.I schemas/tidyfs-cli-top-v1.schema.json .
+This extension is not part of the immutable v0.7.0 binary distribution. The schema must be shipped with a future public binary release before that release advertises stable automation support.
+.PP
 Other command output remains pre-1.0 human-oriented text unless explicitly documented as a stable machine contract. Diagnostics and recovery warnings are written to standard error. Commands do not treat piped input or machine-format selection as approval or mutation authority.
 .SH EXIT STATUS
 .TP
@@ -195,4 +207,4 @@ tidyfs top --limit 50 | head -n 10
 .BR du (1),
 .BR sqlite3 (1)
 .SH NOTES
-The CLI is pre-1.0. The adapters JSON document is a versioned structured-output interface; other structured-output and finer-grained exit-status contracts may be introduced incrementally and should be treated as versioned interfaces once declared stable.
+The CLI is pre-1.0. The adapters and top JSON documents are individually versioned read-only structured-output interfaces; other structured-output and finer-grained exit-status contracts may be introduced incrementally. Current binary release support is limited to the contracts actually present in that immutable version.
