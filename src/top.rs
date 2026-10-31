@@ -22,7 +22,7 @@ struct TopRow {
     symlink_count: u64,
 }
 
-pub fn print_top(database: &Database, query: TopQuery) -> Result<()> {
+pub fn print_top(database: &Database, query: TopQuery, json: bool) -> Result<()> {
     let scan = match query.scan_id {
         Some(id) => database.get_scan(id)?,
         None => database.latest_completed_scan()?,
@@ -50,6 +50,29 @@ pub fn print_top(database: &Database, query: TopQuery) -> Result<()> {
 
     filtered.sort_by_key(|entry| std::cmp::Reverse(entry.allocated_size));
     filtered.truncate(query.limit);
+
+    if json {
+        // This is a read-only presentation contract over indexed directory facts.
+        // JSON does not change scan, policy, planning, or cleanup authority.
+        const TOP_SCHEMA: &str = "tidyfs.cli.top/v1";
+        let report = serde_json::json!({
+            "schema": TOP_SCHEMA,
+            "command": "top",
+            "scan_id": scan.id,
+            "scan_root": scan.root_path,
+            "filter_root": root_filter,
+            "rows": filtered.iter().map(|row| serde_json::json!({
+                "path": row.path,
+                "allocated_size_bytes": row.allocated_size,
+                "total_size_bytes": row.total_size,
+                "file_count": row.file_count,
+                "dir_count": row.dir_count,
+                "symlink_count": row.symlink_count,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
 
     println!("scan_id: {}", scan.id);
     println!("scan_root: {}", scan.root_path.display());
