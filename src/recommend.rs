@@ -28,13 +28,13 @@ pub struct RecommendQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct PlanCandidate {
-    id: i64,
-    path: PathBuf,
-    size_bytes: u64,
-    rule_id: String,
-    category: String,
-    risk: Risk,
+pub(crate) struct PlanCandidate {
+    pub(crate) id: i64,
+    pub(crate) path: PathBuf,
+    pub(crate) size_bytes: u64,
+    pub(crate) rule_id: String,
+    pub(crate) category: String,
+    pub(crate) risk: Risk,
 }
 
 #[derive(Debug, Clone)]
@@ -156,7 +156,7 @@ fn validate_query(query: &RecommendQuery) -> Result<()> {
     Ok(())
 }
 
-fn load_eligible_candidates(
+pub(crate) fn load_eligible_candidates(
     database: &Database,
     scan_id: i64,
     root: Option<&Path>,
@@ -290,7 +290,7 @@ fn load_eligible_candidates(
     Ok(candidates)
 }
 
-fn build_contract_candidates(
+pub(crate) fn build_contract_candidates(
     candidates: &[PlanCandidate],
     path_mode: AiPathMode,
 ) -> Vec<AiGoalCandidate> {
