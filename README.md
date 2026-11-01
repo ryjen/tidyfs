@@ -48,6 +48,7 @@ Implemented:
 - persisted advisory AI rationale, confidence, provenance, and observation evidence
 - `explain` with freshness revalidation of stored AI evidence
 - read-only goal-oriented `recommend` over canonical existing plan candidates
+- experimental read-only MCP stdio tools over completed scans and deterministic plans (no cleanup authority)
 - deterministic goal-plan freshness binding and reclaim-byte calculation
 - optional versioned live-model quality evaluation harness
 - standalone Nix flake package/app/check/dev-shell contract
@@ -188,6 +189,10 @@ tidyfs recommend \
 Before inference, `tidyfs` exposes only canonical, pairwise non-overlapping, unblocked, reversible quarantine candidates inside the requested root/risk boundary. The gateway may select only candidate IDs supplied in the request. After inference, the persisted plan is re-read and revalidated; unknown, duplicate, stale, or otherwise invalid selections fail closed.
 
 The model does not author reclaim totals. `tidyfs` calculates selected bytes and `target_met` from the revalidated candidate set. The result is recommendation output only; cleanup still requires a separate deterministic `clean` flow.
+
+## MCP tool server (experimental)
+
+Run `tidyfs mcp serve` as a trusted MCP client's local stdio subprocess. It exposes bounded completed-scan, existing-plan, eligible-candidate and selection-validation tools using the existing deterministic policy. It neither scans nor modifies the filesystem, and it does not call a model. No host service or network port is opened. See [MCP read-only contract](docs/mcp.md).
 
 ## Adapter inspection
 
