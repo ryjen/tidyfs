@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{params, Connection, OpenFlags, Transaction};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -13,6 +13,14 @@ pub struct Database {
 }
 
 impl Database {
+    /// Open an existing database for inspection without creating a directory,
+    /// migrating a schema, or obtaining SQLite write authority.
+    pub fn open_read_only(path: &Path) -> Result<Self> {
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("opening sqlite database read-only {}", path.display()))?;
+        Ok(Self { conn })
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
