@@ -8,6 +8,7 @@ mod clean;
 mod db;
 mod explain;
 mod mutation_lock;
+mod mcp;
 mod plan;
 mod recommend;
 mod recover;
@@ -230,6 +231,12 @@ enum Command {
         max_response_bytes: usize,
     },
 
+    /// Serve bounded read-only filesystem facts as MCP tools over stdio.
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
+
     /// Preview allowed cleanup candidates without touching the filesystem.
     Clean {
         /// Scan id to inspect. Defaults to latest completed scan.
@@ -298,6 +305,12 @@ enum Command {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum McpCommand {
+    /// Run a local MCP stdio server; never scans or modifies filesystem data.
+    Serve,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliRisk {
     Low,
@@ -346,6 +359,11 @@ fn main() -> Result<()> {
             CliOutputFormat::Json => println!("{}", adapters::render_adapters_json()?),
         }
         return Ok(());
+    }
+
+    if let Command::Mcp { command: McpCommand::Serve } = &cli.command {
+        let db_path = util::resolve_db_path(cli.db)?;
+        return mcp::serve(&db_path);
     }
 
     let db_path = util::resolve_db_path(cli.db)?;
@@ -494,6 +512,7 @@ fn main() -> Result<()> {
                 },
             )?;
         }
+        Command::Mcp { .. } => unreachable!("MCP is dispatched before database migration"),
         Command::Clean {
             scan_id,
             dry_run,
